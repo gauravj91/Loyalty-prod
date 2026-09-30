@@ -164,7 +164,7 @@ export default function Admin() {
   }
 
   if (loadErr) return <div className="wrap"><div className="err sm">{loadErr}</div><div style={{ height: 10 }} /><button className="btn" onClick={() => window.location.reload()}>Retry</button></div>
-  if (phase === 'loading' || !rest) return <div className="wrap"><p className="muted">Loading…</p></div>
+  if (!rest) return <div className="wrap"><p className="muted">Loading…</p></div>
 
   return <div className="wrap wide">
     <div className="spread" style={{ marginBottom: 14 }}>
