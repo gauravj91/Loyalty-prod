@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
-import { errMsg } from '../lib/helpers'
+import { supabase } from '../../lib/supabase'
+import { errMsg } from '../../lib/helpers'
 
 export default function Super() {
   const [phase, setPhase] = useState('loading'); const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
