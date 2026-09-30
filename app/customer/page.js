@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { supabase } from '../lib/supabase'
-import { inr, fmtDate, tierFor, nextTierFor, errMsg } from '../lib/helpers'
+import { supabase } from '../../lib/supabase'
+import { inr, fmtDate, tierFor, nextTierFor, errMsg } from '../../lib/helpers'
 
 const LS = 'tessera_customer'
 
