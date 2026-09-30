@@ -26,12 +26,15 @@ export default function Admin() {
   // outlets
   const [outs, setOuts] = useState([]); const [outF, setOutF] = useState({ name: '', address: '', phone: '' })
 
+    const [loadErr, setLoadErr] = useState('')
   useEffect(() => { (async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { window.location.href = '/login'; return }
-    const { data: ru } = await supabase.from('restaurant_users')
+    const { data: ru, error: ruErr } = await supabase.from('restaurant_users')
       .select('*, restaurants(*)').eq('user_id', session.user.id).limit(1)
+    if (ruErr) { setLoadErr(errMsg(ruErr)); return }
     if (!ru?.length || ru[0].role === 'staff') { window.location.href = '/staff'; return }
+    if (!ru[0].restaurants) { setLoadErr('Account linked, but the restaurant could not be loaded. Try the schema reload and refresh.'); return }
     setRest(ru[0].restaurants)
   })() }, [])
 
@@ -160,6 +163,7 @@ export default function Admin() {
     error ? setErr(errMsg(error)) : flash('Outlet added'); setOutF({ name: '', address: '', phone: '' }); loadOutlets()
   }
 
+  if (loadErr) return <div className="wrap"><div className="err sm">{loadErr}</div><div style={{ height: 10 }} /><button className="btn" onClick={() => window.location.reload()}>Retry</button></div>
   if (phase === 'loading' || !rest) return <div className="wrap"><p className="muted">Loading…</p></div>
 
   return <div className="wrap wide">
