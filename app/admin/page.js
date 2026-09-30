@@ -264,7 +264,7 @@ export default function Admin() {
         </span>
       </div>)}
       <h3 style={{ marginTop: 14 }}>Add team member</h3>
-      <p className="xs muted">They must sign up first: open the app > Login > "Staff sign-up". Then add their email here.</p>
+            <p className="xs muted">They must sign up first: open the app → Login → "Staff sign-up". Then add their email here.</p>
       <div className="row" style={{ marginTop: 8 }}><input className="input grow" placeholder="their@email.com" value={stF.email} onChange={e => setStF({ ...stF, email: e.target.value })} />
         <input className="input" style={{ width: 130 }} placeholder="Name" value={stF.name} onChange={e => setStF({ ...stF, name: e.target.value })} />
         <select className="select" style={{ width: 120 }} value={stF.role} onChange={e => setStF({ ...stF, role: e.target.value })}>
