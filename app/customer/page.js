@@ -67,7 +67,7 @@ export default function CustomerPortal() {
       <h2>Open your loyalty page</h2>
       <p className="sm muted" style={{ marginTop: 8 }}>
         This page needs your personal loyalty link. Open the link or scan the QR card your restaurant gave you —
-        it looks like <b>…/customer?slug=…&qr=…&k=…</b>. Tip: bookmark it or keep the photo of your QR card.
+        it looks like <b>…/customer?slug=…&amp;qr=…&amp;k=…</b>. Tip: bookmark it or keep the photo of your QR card.
       </p>
       {err && <div className="err sm" style={{ marginTop: 12 }}>{err}</div>}
     </div>
