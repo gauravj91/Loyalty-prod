@@ -167,10 +167,10 @@ export default function Admin() {
     error ? setErr(errMsg(error)) : flash('Outlet added'); setOutF({ name: '', address: '', phone: '' }); loadOutlets()
   }
 
-  const ledgerRows = [
-    ...ordersRaw.map(o => ({ at: o.created_at, what: 'Bill — ' + o.payment_method, cash: o.other_paid_paise, wallet: o.wallet_paid_paise, credit: 0 })),
-    ...wtxRaw.filter(x => x.type === 'topup').map(x => ({ at: x.created_at, what: 'Wallet top-up (' + (x.payment_method || 'cash') + ')', cash: x.amount_paise, wallet: 0, credit: x.bonus_paise || 0 })),
-    ...wtxRaw.filter(x => x.type === 'adjustment').map(x => ({ at: x.created_at, what: 'Adjustment — ' + (x.note || 'manual'), cash: 0, wallet: 0, credit: x.amount_paise })),
+    const ledgerRows = [
+    ...ordersRaw.map(o => ({ at: o.created_at, what: 'Bill — ' + o.payment_method, cash: o.other_paid_paise, wallet: o.wallet_paid_paise, credit: 0, by: o.created_by_name })),
+    ...wtxRaw.filter(x => x.type === 'topup').map(x => ({ at: x.created_at, what: 'Wallet top-up (' + (x.payment_method || 'cash') + ')', cash: x.amount_paise, wallet: 0, credit: x.bonus_paise || 0, by: x.created_by_name })),
+    ...wtxRaw.filter(x => x.type === 'adjustment').map(x => ({ at: x.created_at, what: 'Adjustment — ' + (x.note || 'manual'), cash: 0, wallet: 0, credit: x.amount_paise, by: x.created_by_name })),
   ].sort((a, b) => new Date(b.at) - new Date(a.at))
 
   if (loadErr) return <div className="wrap"><div className="err sm">{loadErr}</div><div style={{ height: 10 }} /><button className="btn" onClick={() => window.location.reload()}>Retry</button></div>
@@ -254,14 +254,14 @@ export default function Admin() {
           </p>
         </>}
       </div>
-      <div className="card">
+            <div className="card">
         <div className="spread"><h3>Ledger</h3><button className="btn slim" onClick={() => downloadCsv(`ledger-${rest.slug}.csv`, [
-          ['Date', 'Detail', 'Counter collected', 'Wallet', 'Credit/bonus out'],
-          ...ledgerRows.map(r => [fmtDate(r.at), r.what, r.cash / 100, r.wallet / 100, r.credit / 100]),
+          ['Date', 'Detail', 'By', 'Counter collected', 'Wallet', 'Credit/bonus out'],
+          ...ledgerRows.map(r => [fmtDate(r.at), r.what, r.by || '', r.cash / 100, r.wallet / 100, r.credit / 100]),
         ])}>Export CSV</button></div>
-        <table className="t"><thead><tr><th>Date</th><th>Detail</th><th>Counter</th><th>Wallet</th><th>Credit out</th></tr></thead><tbody>
+        <table className="t"><thead><tr><th>Date</th><th>Detail</th><th>By</th><th>Counter</th><th>Wallet</th><th>Credit out</th></tr></thead><tbody>
           {ledgerRows.slice(0, 100).map((r, i) => <tr key={i}>
-            <td className="xs">{fmtDate(r.at)}</td><td className="sm">{r.what}</td>
+            <td className="xs">{fmtDate(r.at)}</td><td className="sm">{r.what}</td><td className="xs">{r.by || '—'}</td>
             <td className="num">{r.cash ? inr(r.cash) : ''}</td>
             <td className="num">{r.wallet ? inr(r.wallet) : ''}</td>
             <td className="num">{r.credit ? inr(r.credit) : ''}</td>
@@ -269,7 +269,6 @@ export default function Admin() {
         </tbody></table>
         {ledgerRows.length === 0 && <p className="sm muted">No entries in this period.</p>}
       </div>
-    </>}
 
     {tab === 'offers' && <div className="card">
       <S title="Wallet scheme" open>
@@ -349,8 +348,7 @@ export default function Admin() {
           </div>
           {sel.prog.map(p => <div key={p.stamp_rule_id} className="sm">{p.stamp_rules.name}: <b className="num">{p.stamps_earned}</b> stamps, {(p.rewards_redeemed || 0)} redeemed</div>)}
           <h3 style={{ marginTop: 12 }}>Recent bills</h3>
-          {sel.orders.map(o => <div key={o.id} className="spread sm" style={{ padding: '4px 0' }}><span className="muted">{fmtDate(o.created_at)}</span><b className="num">{inr(o.total_paise)}</b></div>)}
-          <h3 style={{ marginTop: 14 }}>Adjust wallet (audited)</h3>
+          {sel.orders.map(o => <div key={o.id} className="spread sm" style={{ padding: '4px 0' }}><span className="muted">{fmtDate(o.created_at)}{o.created_by_name ? ' · ' + o.created_by_name : ''}</span><b className="num">{inr(o.total_paise)}</b></div>)}          <h3 style={{ marginTop: 14 }}>Adjust wallet (audited)</h3>
           <div className="row"><input className="input grow" type="number" step="0.01" placeholder="Amount ₹ (+/-)" value={adjF.amount} onChange={e => setAdjF({ ...adjF, amount: e.target.value })} /></div>
           <input className="input" style={{ marginTop: 8 }} placeholder="Reason (required)" value={adjF.reason} onChange={e => setAdjF({ ...adjF, reason: e.target.value })} />
           <div style={{ height: 10 }} />
