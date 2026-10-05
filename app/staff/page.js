@@ -186,9 +186,15 @@ export default function Staff() {
 
   const t = cust && cfg ? tierFor(cust.lifetime_points, cfg.tiers) : null
 
-  return <div className="wrap">
+    return <div className="wrap">
+      <div className="spread" style={{ marginBottom: 14 }}>
+      <h1>{rest.name} <span className="muted" style={{ fontSize: 15 }}>· Admin</span></h1>
+      <span className="row">
+        <button className="btn slim" onClick={() => { window.location.href = '/staff' }}>Staff view</button>
+        <button className="btn slim" onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}>Log out</button>
+      </span>
+    </div>
     <div className="spread" style={{ marginBottom: 14 }}>
-      <h1>{rest.name}</h1>
       {outlets.length > 1
         ? <select className="select" style={{ width: 'auto' }} value={outletId} onChange={e => setOutletId(e.target.value)}>
             {outlets.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
