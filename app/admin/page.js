@@ -9,23 +9,18 @@ const S = ({ title, children, open }) => (
 )
 
 export default function Admin() {
-  const [phase, setPhase] = useState('loading'); const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
+  const [err, setErr] = useState(''); const [msg, setMsg] = useState(''); const [loadErr, setLoadErr] = useState('')
   const [rest, setRest] = useState(null); const [tab, setTab] = useState('overview')
-  // overview
-  const [range, setRange] = useState(6); const [stats, setStats] = useState(null); const [ordersRaw, setOrdersRaw] = useState([]); const [wtxRaw, setWtxRaw] = useState([])  // offers
+  const [range, setRange] = useState(6); const [stats, setStats] = useState(null); const [ordersRaw, setOrdersRaw] = useState([]); const [wtxRaw, setWtxRaw] = useState([])
   const [ws, setWs] = useState(null); const [wsF, setWsF] = useState({ name: 'Wallet offer', min: '500', bonus: '10', cap: '' })
   const [rules, setRules] = useState([]); const [ruleF, setRuleF] = useState({ name: '', target_type: 'item', target_value: '', required_count: '10', reward_type: 'free_item', reward_value: '1', reward_label: '' })
   const [pc, setPc] = useState(null); const [pcF, setPcF] = useState({ per100: '1', active: true, b0: '0', b1: '500', b2: '1000', b3: '2500' })
   const [rws, setRws] = useState([]); const [rwF, setRwF] = useState({ name: '', description: '', required_points: '500', value: '250', max: '1' })
-  // staff
   const [staff, setStaff] = useState([]); const [stF, setStF] = useState({ email: '', role: 'staff', name: '' })
-  // customers
   const [q, setQ] = useState(''); const [custs, setCusts] = useState([]); const [sel, setSel] = useState(null)
   const [adjF, setAdjF] = useState({ amount: '', reason: '' }); const [link, setLink] = useState(null)
-  // outlets
   const [outs, setOuts] = useState([]); const [outF, setOutF] = useState({ name: '', address: '', phone: '' })
 
-    const [loadErr, setLoadErr] = useState('')
   useEffect(() => { (async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { window.location.href = '/login'; return }
@@ -33,14 +28,15 @@ export default function Admin() {
       .select('*, restaurants(*)').eq('user_id', session.user.id).limit(1)
     if (ruErr) { setLoadErr(errMsg(ruErr)); return }
     if (!ru?.length || ru[0].role === 'staff') { window.location.href = '/staff'; return }
-    if (!ru[0].restaurants) { setLoadErr('Account linked, but the restaurant could not be loaded. Try the schema reload and refresh.'); return }
+    if (!ru[0].restaurants) { setLoadErr('Account linked, but the restaurant could not be loaded. Refresh and try again.'); return }
     setRest(ru[0].restaurants)
   })() }, [])
 
   useEffect(() => { if (!rest) return; loadOffers(); loadStaff(); loadOutlets() }, [rest])
   useEffect(() => { if (rest && tab === 'overview') loadStats() }, [rest, tab, range])
   useEffect(() => { if (rest && tab === 'customers') searchCusts('') }, [rest, tab])
-    async function loadStats() {
+
+  async function loadStats() {
     const from = dayStart(range)
     const [o, w, cb] = await Promise.all([
       supabase.from('orders').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false }),
@@ -71,6 +67,7 @@ export default function Admin() {
     })
     setOrdersRaw(ords); setWtxRaw(wtx)
   }
+
   async function loadOffers() {
     const rid = rest.id
     const [w, sr, p, rw] = await Promise.all([
@@ -170,25 +167,29 @@ export default function Admin() {
     error ? setErr(errMsg(error)) : flash('Outlet added'); setOutF({ name: '', address: '', phone: '' }); loadOutlets()
   }
 
-  if (loadErr) return <div className="wrap"><div className="err sm">{loadErr}</div><div style={{ height: 10 }} /><button className="btn" onClick={() => window.location.reload()}>Retry</button></div>
-  if (!rest) return <div className="wrap"><p className="muted">Loading…</p></div>
   const ledgerRows = [
     ...ordersRaw.map(o => ({ at: o.created_at, what: 'Bill — ' + o.payment_method, cash: o.other_paid_paise, wallet: o.wallet_paid_paise, credit: 0 })),
     ...wtxRaw.filter(x => x.type === 'topup').map(x => ({ at: x.created_at, what: 'Wallet top-up (' + (x.payment_method || 'cash') + ')', cash: x.amount_paise, wallet: 0, credit: x.bonus_paise || 0 })),
     ...wtxRaw.filter(x => x.type === 'adjustment').map(x => ({ at: x.created_at, what: 'Adjustment — ' + (x.note || 'manual'), cash: 0, wallet: 0, credit: x.amount_paise })),
   ].sort((a, b) => new Date(b.at) - new Date(a.at))
 
+  if (loadErr) return <div className="wrap"><div className="err sm">{loadErr}</div><div style={{ height: 10 }} /><button className="btn" onClick={() => window.location.reload()}>Retry</button></div>
+  if (!rest) return <div className="wrap"><p className="muted">Loading…</p></div>
+
   return <div className="wrap wide">
     <div className="spread" style={{ marginBottom: 14 }}>
       <h1>{rest.name} <span className="muted" style={{ fontSize: 15 }}>· Admin</span></h1>
-      <button className="btn slim" onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}>Log out</button>
+      <span className="row">
+        <button className="btn slim" onClick={() => { window.location.href = '/staff' }}>Staff view</button>
+        <button className="btn slim" onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}>Log out</button>
+      </span>
     </div>
     {msg && <div className="ok sm">{msg}</div>}
     {err && <div className="err sm">{err}</div>}
 
     <div className="tabs">
       {['overview', 'books', 'offers', 'staff', 'customers', 'outlets'].map(t =>
-      <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}
+        <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}
     </div>
 
     {tab === 'overview' && <>
@@ -208,6 +209,7 @@ export default function Admin() {
           <div className="row sm" style={{ marginTop: 10, flexWrap: 'wrap' }}>
             <span className="chip">Wallet sales {inr(stats.walletSales)}</span>
             <span className="chip">Top-ups {inr(stats.topups)}</span>
+            <span className="chip">Bonus given {inr(stats.bonusGiven)}</span>
             <span className="chip">Points issued {stats.points}</span>
             {Object.entries(stats.byMethod).map(([m, v]) => <span key={m} className="chip">{m} {inr(v)}</span>)}
           </div>
@@ -226,6 +228,7 @@ export default function Admin() {
         </>}
       </div>
     </>}
+
     {tab === 'books' && <>
       <div className="card">
         <div className="spread">
@@ -247,7 +250,7 @@ export default function Admin() {
             <tr><td><b>Sales − bonus credits (indicative)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.revenue - stats.bonusGiven)}</b></td></tr>
           </tbody></table>
           <p className="xs muted" style={{ marginTop: 10 }}>
-            "Indicative" is not true profit — food/ingredient costs aren't tracked here. Bonus credits are the direct marketing cost of the wallet offer, and wallet liability is money customers can still spend at your outlets. Export the ledger below for your accountant.
+            "Indicative" is not true profit — food costs are not tracked here. Bonus credits are the direct marketing cost of the wallet offer, and wallet liability is money customers can still spend. Export the ledger below for your accountant.
           </p>
         </>}
       </div>
@@ -287,90 +290,4 @@ export default function Admin() {
         <div className="row" style={{ marginTop: 8 }}>
           <input className="input" style={{ width: 80 }} type="number" placeholder="Buy" value={ruleF.required_count} onChange={e => setRuleF({ ...ruleF, required_count: e.target.value })} />
           <select className="select" style={{ width: 150 }} value={ruleF.reward_type} onChange={e => setRuleF({ ...ruleF, reward_type: e.target.value })}>
-            <option value="free_item">Free item</option><option value="percent_discount">% discount</option><option value="fixed_discount">₹ discount</option></select>
-          <input className="input grow" placeholder="Reward value (1 / % / ₹)" value={ruleF.reward_value} onChange={e => setRuleF({ ...ruleF, reward_value: e.target.value })} />
-          <input className="input grow" placeholder="Label e.g. 1 free coffee" value={ruleF.reward_label} onChange={e => setRuleF({ ...ruleF, reward_label: e.target.value })} /></div>
-        <div style={{ height: 12 }} /><button className="btn primary" onClick={addRule}>Add stamp rule</button>
-      </S>
-      <S title="Points & tiers">
-        <div className="row"><div className="grow"><label className="label">Points per ₹100 spent</label><input className="input" type="number" step="0.5" value={pcF.per100} onChange={e => setPcF({ ...pcF, per100: e.target.value })} /></div>
-          {['b0', 'b1', 'b2', 'b3'].map((k, i) => <div key={k} style={{ width: 80 }}><label className="label">{['Bronze', 'Silver', 'Gold', 'Platinum'][i]}</label><input className="input" type="number" value={pcF[k]} onChange={e => setPcF({ ...pcF, [k]: e.target.value })} /></div>)}</div>
-        <div style={{ height: 12 }} /><button className="btn primary" onClick={savePoints}>Save points settings</button>
-      </S>
-      <S title={`Points rewards (${rws.length})`}>
-        {rws.map(r => <div key={r.id} className="spread sm" style={{ padding: '6px 0' }}>
-          <span><b>{r.name}</b> — {r.required_points} pts, worth {inr(r.value_paise)}{r.max_per_customer ? `, max ${r.max_per_customer}×` : ''}</span>
-          <button className={'chip ' + (r.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={() => toggle('rewards', r.id, r.active)}>{r.active ? 'Active' : 'Off'}</button>
-        </div>)}
-        <div className="row" style={{ marginTop: 8 }}><input className="input grow" placeholder="Reward name" value={rwF.name} onChange={e => setRwF({ ...rwF, name: e.target.value })} />
-          <input className="input" style={{ width: 110 }} type="number" placeholder="Points" value={rwF.required_points} onChange={e => setRwF({ ...rwF, required_points: e.target.value })} />
-          <input className="input" style={{ width: 110 }} type="number" placeholder="Worth ₹" value={rwF.value} onChange={e => setRwF({ ...rwF, value: e.target.value })} />
-          <input className="input" style={{ width: 80 }} type="number" placeholder="Max×" value={rwF.max} onChange={e => setRwF({ ...rwF, max: e.target.value })} /></div>
-        <div style={{ height: 12 }} /><button className="btn primary" onClick={addReward}>Add reward</button>
-      </S>
-    </div>}
-
-    {tab === 'staff' && <div className="card">
-      <h2>Staff & roles</h2>
-      {staff.map(s => <div key={s.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
-        <span><b>{s.name || s.role}</b> <span className="muted">({s.role})</span> {s.status !== 'active' && <span className="chip r">inactive</span>}</span>
-        <span className="row">
-          <select className="select" style={{ width: 120, padding: '6px 8px' }} value={s.role} onChange={e => updStaff(s.id, { role: e.target.value })}>
-            <option value="owner">owner</option><option value="manager">manager</option><option value="staff">staff</option></select>
-          <button className="chip" style={{ cursor: 'pointer' }} onClick={() => updStaff(s.id, { status: s.status === 'active' ? 'inactive' : 'active' })}>{s.status === 'active' ? 'Deactivate' : 'Activate'}</button>
-        </span>
-      </div>)}
-      <h3 style={{ marginTop: 14 }}>Add team member</h3>
-            <p className="xs muted">They must sign up first: open the app → Login → "Staff sign-up". Then add their email here.</p>
-      <div className="row" style={{ marginTop: 8 }}><input className="input grow" placeholder="their@email.com" value={stF.email} onChange={e => setStF({ ...stF, email: e.target.value })} />
-        <input className="input" style={{ width: 130 }} placeholder="Name" value={stF.name} onChange={e => setStF({ ...stF, name: e.target.value })} />
-        <select className="select" style={{ width: 120 }} value={stF.role} onChange={e => setStF({ ...stF, role: e.target.value })}>
-          <option value="staff">staff</option><option value="manager">manager</option><option value="owner">owner</option></select>
-        <button className="btn slim primary" onClick={addStaff}>Add</button></div>
-    </div>}
-
-    {tab === 'customers' && <div className="card">
-      <h2>Customers {custs.length > 0 && <span className="muted sm">({custs.length}{q.length < 2 ? ' most recent' : ' found'})</span>}</h2>
-      <input className="input" placeholder="Search phone or name" value={q} onChange={e => searchCusts(e.target.value)} />
-      {custs.map(c => <div key={c.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', cursor: 'pointer' }} onClick={() => openCust(c)}>
-        <span><b>{c.name || 'Customer'}</b> <span className="muted num">{c.phone}</span></span>
-        <span className="row"><span className="chip">{inr(c.wallet_balance_paise)}</span><span className="chip a">{c.points_balance} pts</span></span>
-      </div>)}
-      {sel && <div className="overlay" onClick={() => setSel(null)}>
-        <div className="modal" style={{ textAlign: 'left' }} onClick={e => e.stopPropagation()}>
-          <h2>{sel.name || 'Customer'}</h2>
-          <div className="row" style={{ margin: '10px 0' }}>
-            <div className="grow"><div className="xs muted">WALLET</div><div className="num" style={{ fontSize: 22, fontWeight: 800 }}>{inr(sel.wallet_balance_paise)}</div></div>
-            <div className="grow"><div className="xs muted">POINTS</div><div className="num" style={{ fontSize: 22, fontWeight: 800 }}>{sel.points_balance} <span className="chip">{tierFor(sel.lifetime_points, (pc?.tiers) || [])?.name || 'Bronze'}</span></div></div>
-          </div>
-          {sel.prog.map(p => <div key={p.stamp_rule_id} className="sm">{p.stamp_rules.name}: <b className="num">{p.stamps_earned}</b> stamps, {(p.rewards_redeemed || 0)} redeemed</div>)}
-          <h3 style={{ marginTop: 12 }}>Recent bills</h3>
-          {sel.orders.map(o => <div key={o.id} className="spread sm" style={{ padding: '4px 0' }}><span className="muted">{fmtDate(o.created_at)}</span><b className="num">{inr(o.total_paise)}</b></div>)}
-          <h3 style={{ marginTop: 14 }}>Adjust wallet (audited)</h3>
-          <div className="row"><input className="input grow" type="number" step="0.01" placeholder="Amount ₹ (+/-)" value={adjF.amount} onChange={e => setAdjF({ ...adjF, amount: e.target.value })} /></div>
-          <input className="input" style={{ marginTop: 8 }} placeholder="Reason (required)" value={adjF.reason} onChange={e => setAdjF({ ...adjF, reason: e.target.value })} />
-          <div style={{ height: 10 }} />
-          <button className="btn primary" onClick={adjust}>Apply adjustment</button>
-          <div style={{ height: 8 }} />
-          <button className="btn" onClick={() => setLink(customerLink(rest.slug, sel.qr_code, sel.qr_secret))}>Show customer QR / link</button>
-          {link && <div style={{ textAlign: 'center', padding: 12 }}>
-            <QRCodeSVG value={link} size={180} /><p className="xs muted" style={{ wordBreak: 'break-all' }}>{link}</p></div>}
-          <div style={{ height: 8 }} />
-          <button className="btn danger" onClick={() => setSel(null)}>Close</button>
-        </div>
-      </div>}
-    </div>}
-
-    {tab === 'outlets' && <div className="card">
-      <h2>Outlets</h2>
-      {outs.map(o => <div key={o.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
-        <span><b>{o.name}</b> <span className="muted">{o.address}</span></span><span className="chip g">{o.status}</span>
-      </div>)}
-      <h3 style={{ marginTop: 14 }}>Add outlet</h3>
-      <input className="input" style={{ marginTop: 8 }} placeholder="Outlet name" value={outF.name} onChange={e => setOutF({ ...outF, name: e.target.value })} />
-      <input className="input" style={{ marginTop: 8 }} placeholder="Address" value={outF.address} onChange={e => setOutF({ ...outF, address: e.target.value })} />
-      <input className="input" style={{ marginTop: 8 }} placeholder="Phone" value={outF.phone} onChange={e => setOutF({ ...outF, phone: e.target.value })} />
-      <div style={{ height: 12 }} /><button className="btn primary" onClick={addOutlet}>Add outlet</button>
-    </div>}
-  </div>
-}
+            <option value="free_item">Free
