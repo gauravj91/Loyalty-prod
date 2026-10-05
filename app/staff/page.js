@@ -343,16 +343,16 @@ export default function Staff() {
         <button className="btn primary" disabled={busy} onClick={doTopup}>{busy ? 'Saving…' : 'Confirm top-up'}</button>
       </div>}
 
-      {tab === 'hist' && <div className="card">
+           {tab === 'hist' && <div className="card">
         <h2>Recent activity</h2>
         {orders.length === 0 && wtx.length === 0 && <p className="sm muted">Nothing yet for this customer.</p>}
         {wtx.filter(x => x.type === 'topup' || x.type === 'adjustment').map(x => <div key={x.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
-          <span><b className="num">{x.amount_paise > 0 ? '+' : ''}{inr(x.amount_paise)}</b> <span className="muted">{x.type === 'topup' ? 'top-up' + (x.bonus_paise ? ' (bonus ' + inr(x.bonus_paise) + ')' : '') : 'adjustment'}</span></span>
+          <span><b className="num">{x.amount_paise > 0 ? '+' : ''}{inr(x.amount_paise)}</b> <span className="muted">{x.type === 'topup' ? 'top-up' + (x.bonus_paise ? ' (bonus ' + inr(x.bonus_paise) + ')' : '') : 'adjustment'}</span>{x.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {x.created_by_name}</span>}</span>
           <span className="muted xs">{fmtDate(x.created_at)}</span>
         </div>)}
         {orders.map(o => <div key={o.id} style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
-          <div className="spread sm"><span><b className="num">{inr(o.total_paise)}</b> <span className="muted">bill</span>{o.points_earned > 0 && <span className="chip a" style={{ marginLeft: 6 }}>+{o.points_earned} pts</span>}</span><span className="muted xs">{fmtDate(o.created_at)}</span></div>
-          <div className="xs muted">{(o.items || []).map(it => `${it.name} ×${it.qty}${it.free ? ' (free)' : ''}`).join(', ')}</div>
+          <div className="spread sm"><span><b className="num">{inr(o.total_paise)}</b> <span className="muted">bill</span>{o.points_earned > 0 && <span className="chip a" style={{ marginLeft: 6 }}>+{o.points_earned} pts</span>}{o.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {o.created_by_name}</span>}</span><span className="muted xs">{fmtDate(o.created_at)}</span></div>
+          <div className="xs muted">{(o.items || []).map(it => `${it.name} ×${it.qty}${it.free ? '(free)' : ''}`).join(', ')}</div>
           <div className="xs muted num">Wallet {inr(o.wallet_paid_paise)} · {o.payment_method} {inr(o.other_paid_paise)}</div>
         </div>)}
       </div>}
