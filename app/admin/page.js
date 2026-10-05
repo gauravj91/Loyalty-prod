@@ -60,6 +60,10 @@ export default function Admin() {
   const [campSeg, setCampSeg] = useState('all'); const [campPts, setCampPts] = useState(100)
   const [campMsg, setCampMsg] = useState('Hi {name}! We miss you — visit us this week and treat yourself.'); const [campList, setCampList] = useState(null)
   const [campIdx, setCampIdx] = useState(0); const [sentIds, setSentIds] = useState([])
+  const [menu, setMenu] = useState([]); const [miF, setMiF] = useState({ id: null, name: '', category: '', price: '', cost: '', active: true })
+  const [mk, setMk] = useState(null); const [mkF, setMkF] = useState({ referrer: '100', referee: '100', birthday: '0' })
+  const [bdays, setBdays] = useState([]); const [annivs, setAnnivs] = useState([]); const [claims, setClaims] = useState(new Set())
+  const [fbList, setFbList] = useState([])
 
   useEffect(() => { (async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -76,6 +80,8 @@ export default function Admin() {
   useEffect(() => { if (rest && tab === 'overview') loadStats() }, [rest, tab, range])
   useEffect(() => { if (rest && tab === 'customers') searchCusts('') }, [rest, tab])
   useEffect(() => { if (rest && tab === 'campaigns') buildCampaign() }, [rest, tab, campSeg, campPts])
+  useEffect(() => { if (rest && tab === 'menu') loadMenu() }, [rest, tab])
+  useEffect(() => { if (rest && tab === 'marketing') loadMarketing() }, [rest, tab])
 
   async function loadStats() {
     const from = dayStart(range)
@@ -103,6 +109,10 @@ export default function Admin() {
     ords.forEach(x => { const r = ensure(x.outlet_id || 'none'); r.sales += x.total_paise; r.bills++; r.wallet += x.wallet_paid_paise; r.counter += x.other_paid_paise; if (x.customer_id) r.custSet.add(x.customer_id) })
     tops.forEach(x => { const r = ensure(x.outlet_id || 'none'); r.topups += x.amount_paise + (x.bonus_paise || 0) })
 
+    const byStaff = {}
+    ords.forEach(x => { const k = x.created_by_name || '—'; const r = byStaff[k] = byStaff[k] || { bills: 0, sales: 0, wallet: 0 }; r.bills++; r.sales += x.total_paise; r.wallet += x.wallet_paid_paise })
+    const staffRows = Object.entries(byStaff).map(([name, v]) => ({ name, bills: v.bills, sales: v.sales, wallet: v.wallet, avg: v.bills ? Math.round(v.sales / v.bills) : 0 })).sort((a, b) => b.sales - a.sales)
+
     const days = range === 0 ? 1 : range + 1
     const dkey = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
     const series = []
@@ -115,6 +125,11 @@ export default function Admin() {
     const active = new Set(ords.map(x => x.customer_id).filter(Boolean))
     const newC = custRows.filter(c => new Date(c.created_at).getTime() >= fromMs).length
     const retC = [...active].filter(id => custMeta[id] && new Date(custMeta[id].created_at).getTime() < fromMs).length
+
+    let costKnown = 0, revKnown = 0
+    ords.forEach(o => (o.items || []).forEach(it => {
+      if (it.cost_paise != null && !it.free) { costKnown += it.qty * it.cost_paise; revKnown += it.qty * it.unit_price_paise }
+    }))
 
     const revenue = ords.reduce((s, x) => s + x.total_paise, 0)
     const bills = ords.length
@@ -129,12 +144,38 @@ export default function Admin() {
       points: ords.reduce((s, x) => s + x.points_earned, 0),
       cashHandover: (byMethod['cash'] || 0) + tops.filter(x => x.payment_method === 'cash').reduce((s, x) => s + x.amount_paise, 0),
       walletLiability: custRows.reduce((s, x) => s + x.wallet_balance_paise, 0),
-      series,
+      series, staffRows,
       newC, retC,
       avgBill: bills ? Math.round(revenue / bills) : 0,
+      costKnown, revKnown,
       outlets: Object.values(byOutlet).map(v => ({ ...v, customers: v.custSet.size })).sort((a, b) => b.sales - a.sales),
     })
     setOrdersRaw(ords); setWtxRaw(wtx)
+  }
+
+  async function loadMenu() {
+    const { data } = await supabase.from('menu_items').select('*').eq('restaurant_id', rest.id).order('category').order('name')
+    setMenu(data || [])
+  }
+  async function loadMarketing() {
+    const y = new Date().getFullYear(); const m = new Date().getMonth()
+    const [mkq, cs, bc, fb] = await Promise.all([
+      supabase.from('marketing_config').select('*').eq('restaurant_id', rest.id).maybeSingle(),
+      supabase.from('customers').select('id, name, phone, birth_date, anniversary_date, referral_code').eq('restaurant_id', rest.id).limit(500),
+      supabase.from('birthday_claims').select('customer_id').eq('restaurant_id', rest.id).eq('year', y),
+      supabase.from('feedback').select('*, customers(name)').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(30),
+    ])
+    setMk(mkq.data || null)
+    setMkF({
+      referrer: String((mkq.data?.referrer_paise ?? 10000) / 100),
+      referee: String((mkq.data?.referee_paise ?? 10000) / 100),
+      birthday: String((mkq.data?.birthday_paise ?? 0) / 100),
+    })
+    setClaims(new Set((bc.data || []).map(x => x.customer_id)))
+    setFbList(fb.data || [])
+    const rows = (cs.data || []).map(c => ({ ...c, _b: c.birth_date ? new Date(c.birth_date + 'T00:00:00') : null, _a: c.anniversary_date ? new Date(c.anniversary_date + 'T00:00:00') : null }))
+    setBdays(rows.filter(c => c._b && c._b.getMonth() === m).sort((a, b) => a._b.getDate() - b._b.getDate()))
+    setAnnivs(rows.filter(c => c._a && c._a.getMonth() === m).sort((a, b) => a._a.getDate() - b._a.getDate()))
   }
 
   async function loadOffers() {
@@ -161,6 +202,37 @@ export default function Admin() {
   async function loadOutlets() {
     const { data } = await supabase.from('outlets').select('*').eq('restaurant_id', rest.id)
     setOuts(data || [])
+  }
+
+  const flash = m => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 3000) }
+
+  async function saveItem() {
+    const vals = { name: miF.name.trim(), category: miF.category.trim() || null, price_paise: toPaise(miF.price), cost_paise: miF.cost ? toPaise(miF.cost) : null, active: miF.active }
+    if (!vals.name) return setErr('Item name is required.')
+    const { error } = miF.id
+      ? await supabase.from('menu_items').update(vals).eq('id', miF.id)
+      : await supabase.from('menu_items').insert({ ...vals, restaurant_id: rest.id })
+    error ? setErr(errMsg(error)) : flash(miF.id ? 'Item updated' : 'Item added')
+    setMiF({ id: null, name: '', category: '', price: '', cost: '', active: true }); loadMenu()
+  }
+  function editItem(m) { setMiF({ id: m.id, name: m.name, category: m.category || '', price: String(m.price_paise / 100), cost: m.cost_paise != null ? String(m.cost_paise / 100) : '', active: m.active }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+  async function delItem(m) {
+    if (!confirm('Delete "' + m.name + '" from the menu? Past bills are not affected.')) return
+    const { error } = await supabase.from('menu_items').delete().eq('id', m.id)
+    error ? setErr(errMsg(error)) : flash('Item deleted'); loadMenu()
+  }
+
+  async function saveMk() {
+    const vals = { referrer_paise: toPaise(mkF.referrer), referee_paise: toPaise(mkF.referee), birthday_paise: toPaise(mkF.birthday) }
+    const { error } = mk
+      ? await supabase.from('marketing_config').update(vals).eq('restaurant_id', rest.id)
+      : await supabase.from('marketing_config').insert({ ...vals, restaurant_id: rest.id })
+    error ? setErr(errMsg(error)) : flash('Marketing settings saved'); loadMarketing()
+  }
+  async function claimBday(c) {
+    if (!confirm('Credit the birthday bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
+    const { error } = await supabase.rpc('claim_birthday', { p_restaurant_id: rest.id, p_customer_id: c.id })
+    error ? setErr(errMsg(error)) : flash('Birthday credit given'); loadMarketing()
   }
 
   async function delScheme() {
@@ -190,8 +262,6 @@ export default function Admin() {
     error ? setErr(errMsg(error)) : flash('Reward deleted')
     loadOffers()
   }
-
-  const flash = m => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 3000) }
 
   async function saveScheme() {
     const vals = { name: wsF.name, min_topup_paise: toPaise(wsF.min), bonus_pct: parseFloat(wsF.bonus || 0), bonus_cap_paise: wsF.cap ? toPaise(wsF.cap) : null }
@@ -251,7 +321,11 @@ export default function Admin() {
       supabase.from('customer_stamp_progress').select('*, stamp_rules(name, required_count)').eq('customer_id', c.id),
       supabase.from('orders').select('*').eq('customer_id', c.id).order('created_at', { ascending: false }).limit(5),
     ])
-    setSel({ ...c, prog: pr.data || [], orders: ords.data || [] })
+    setSel({ ...c, prog: pr.data || [], orders: ords.data || [], birth: c.birth_date || '', anniv: c.anniversary_date || '' })
+  }
+  async function saveCustDates() {
+    const { error } = await supabase.from('customers').update({ birth_date: sel.birth || null, anniversary_date: sel.anniv || null }).eq('id', sel.id)
+    error ? setErr(errMsg(error)) : flash('Dates saved'); setSel(null)
   }
   async function adjust() {
     const { error } = await supabase.rpc('adjust_wallet', {
@@ -320,6 +394,9 @@ export default function Admin() {
   if (loadErr) return <div className="wrap"><div className="err sm">{loadErr}</div><div style={{ height: 10 }} /><button className="btn" onClick={() => window.location.reload()}>Retry</button></div>
   if (!rest) return <div className="wrap"><p className="muted">Loading…</p></div>
 
+  const fbAvg = fbList.length ? (fbList.reduce((s, f) => s + f.stars, 0) / fbList.length).toFixed(1) : null
+  const marginPct = stats && stats.revKnown > 0 ? Math.round((stats.revKnown - stats.costKnown) / stats.revKnown * 100) : null
+
   return <div className="wrap wide">
     <div className="spread" style={{ marginBottom: 14 }}>
       <h1>{rest.name} <span className="muted" style={{ fontSize: 15 }}>· Admin</span></h1>
@@ -332,7 +409,7 @@ export default function Admin() {
     {err && <div className="err sm">{err}</div>}
 
     <div className="tabs">
-      {['overview', 'books', 'campaigns', 'offers', 'staff', 'customers', 'outlets'].map(t =>
+      {['overview', 'books', 'menu', 'marketing', 'campaigns', 'offers', 'staff', 'customers', 'outlets'].map(t =>
         <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}
     </div>
 
@@ -378,6 +455,16 @@ export default function Admin() {
             <OutletTable rows={stats.outlets} />
           </>}
 
+          {stats.staffRows.length > 0 && <>
+            <h3 style={{ marginTop: 16 }}>By staff member</h3>
+            <table className="t"><thead><tr><th>Staff</th><th>Bills</th><th>Sales</th><th>Avg bill</th><th>Wallet used</th></tr></thead><tbody>
+              {stats.staffRows.map(r => <tr key={r.name}>
+                <td><b>{r.name}</b></td><td className="num">{r.bills}</td>
+                <td className="num">{inr(r.sales)}</td><td className="num">{inr(r.avg)}</td><td className="num">{inr(r.wallet)}</td>
+              </tr>)}
+            </tbody></table>
+          </>}
+
           {Object.keys(stats.itemAgg).length > 0 && <>
             <h3 style={{ marginTop: 16 }}>Top items</h3>
             <table className="t"><thead><tr><th>Item</th><th>Qty</th><th>Sales</th></tr></thead><tbody>
@@ -387,8 +474,8 @@ export default function Admin() {
           </>}
           <div style={{ height: 12 }} />
           <button className="btn" onClick={() => downloadCsv(`orders-${rest.slug}.csv`, [
-            ['Date', 'Outlet', 'Total ₹', 'Wallet ₹', 'Other ₹', 'Method', 'Points'],
-            ...ordersRaw.map(o => [fmtDate(o.created_at), outletNames[o.outlet_id] || o.outlet_id, o.total_paise / 100, o.wallet_paid_paise / 100, o.other_paid_paise / 100, o.payment_method, o.points_earned]),
+            ['Date', 'Outlet', 'Staff', 'Total ₹', 'Wallet ₹', 'Other ₹', 'Method', 'Points'],
+            ...ordersRaw.map(o => [fmtDate(o.created_at), outletNames[o.outlet_id] || o.outlet_id, o.created_by_name || '', o.total_paise / 100, o.wallet_paid_paise / 100, o.other_paid_paise / 100, o.payment_method, o.points_earned]),
           ])}>Export orders CSV</button>
         </>}
       </div>
@@ -409,13 +496,17 @@ export default function Admin() {
             <tr><td className="muted">— settled from wallet</td><td className="num" style={{ textAlign: 'right' }}>{inr(stats.walletSales)}</td></tr>
             <tr><td><b>Wallet top-ups received (cash in)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.topupCash)}</b></td></tr>
             <tr><td className="muted">— bonus credit given free</td><td className="num" style={{ textAlign: 'right' }}>−{inr(stats.bonusGiven)}</td></tr>
+            {stats.revKnown > 0 && <>
+              <tr><td className="muted">— food cost on priced items (from menu costs)</td><td className="num" style={{ textAlign: 'right' }}>−{inr(stats.costKnown)}</td></tr>
+              <tr><td><b>Gross margin on priced items{marginPct != null ? ' (' + marginPct + '%)' : ''}</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.revKnown - stats.costKnown)}</b></td></tr>
+            </>}
             <tr><td><b>Cash to reconcile (cash sales + cash top-ups)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.cashHandover)}</b></td></tr>
             <tr><td className="muted">Wallet liability owed to customers (current)</td><td className="num" style={{ textAlign: 'right' }}>{inr(stats.walletLiability)}</td></tr>
             <tr><td className="muted">Points issued in period</td><td className="num" style={{ textAlign: 'right' }}>{stats.points}</td></tr>
             <tr><td><b>Sales − bonus credits (indicative)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.revenue - stats.bonusGiven)}</b></td></tr>
           </tbody></table>
           <p className="xs muted" style={{ marginTop: 10 }}>
-            "Indicative" is not true profit — food costs are not tracked here. Bonus credits are the direct marketing cost of the wallet offer, and wallet liability is money customers can still spend. Export the ledger below for your accountant.
+            Margin is exact only for menu items with a cost price set (custom/free items are excluded from that line — set costs under Menu to widen coverage). Bonus credits are the marketing cost of the wallet offer. Export the ledger below for your accountant.
           </p>
           <h3 style={{ marginTop: 16 }}>By outlet</h3>
           <OutletTable rows={stats.outlets} />
@@ -438,6 +529,75 @@ export default function Admin() {
       </div>
     </>}
 
+    {tab === 'menu' && <div className="card">
+      <h2>Menu</h2>
+      <p className="sm muted">One-tap billing for staff. Cost price (optional) unlocks true gross margin in Books — staff never see costs.</p>
+      <div className="row"><input className="input grow" placeholder="Item name" value={miF.name} onChange={e => setMiF({ ...miF, name: e.target.value })} />
+        <input className="input" style={{ width: 110 }} placeholder="Category" value={miF.category} onChange={e => setMiF({ ...miF, category: e.target.value })} /></div>
+      <div className="row" style={{ marginTop: 8 }}>
+        <input className="input" style={{ width: 110 }} type="number" step="0.01" placeholder="Price ₹" value={miF.price} onChange={e => setMiF({ ...miF, price: e.target.value })} />
+        <input className="input" style={{ width: 110 }} type="number" step="0.01" placeholder="Cost ₹ (opt.)" value={miF.cost} onChange={e => setMiF({ ...miF, cost: e.target.value })} />
+        <button className="btn slim primary" onClick={saveItem}>{miF.id ? 'Update item' : 'Add item'}</button>
+        {miF.id && <button className="btn slim" onClick={() => setMiF({ id: null, name: '', category: '', price: '', cost: '', active: true })}>Cancel</button>}
+      </div>
+      <div style={{ height: 12 }} />
+      {menu.length === 0 && <p className="sm muted">No items yet — add your top sellers first.</p>}
+      {menu.map(m => <div key={m.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
+        <span><b>{m.name}</b> <span className="muted">{m.category}</span><br />
+          <span className="num muted">{inr(m.price_paise)}{m.cost_paise != null ? ' · cost ' + inr(m.cost_paise) + ' · margin ' + Math.round((m.price_paise - m.cost_paise) / m.price_paise * 100) + '%' : ''}</span></span>
+        <span className="row">
+          <button className={'chip ' + (m.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={async () => { await supabase.from('menu_items').update({ active: !m.active }).eq('id', m.id); loadMenu() }}>{m.active ? 'Active' : 'Off'}</button>
+          <button className="chip" style={{ cursor: 'pointer' }} onClick={() => editItem(m)}>Edit</button>
+          <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delItem(m)}>Del</button>
+        </span>
+      </div>)}
+    </div>}
+
+    {tab === 'marketing' && <>
+      <div className="card">
+        <h2>Rewards & occasions</h2>
+        <p className="sm muted">Referral bonuses credit both wallets the moment staff enters the friend's code. Birthday credit is once per customer per year, given at the counter.</p>
+        <div className="row">
+          <div className="grow"><label className="label">Referrer gets ₹</label><input className="input" type="number" value={mkF.referrer} onChange={e => setMkF({ ...mkF, referrer: e.target.value })} /></div>
+          <div className="grow"><label className="label">New friend gets ₹</label><input className="input" type="number" value={mkF.referee} onChange={e => setMkF({ ...mkF, referee: e.target.value })} /></div>
+          <div className="grow"><label className="label">Birthday credit ₹ (0 = off)</label><input className="input" type="number" value={mkF.birthday} onChange={e => setMkF({ ...mkF, birthday: e.target.value })} /></div>
+        </div>
+        <div style={{ height: 12 }} /><button className="btn primary" onClick={saveMk}>Save settings</button>
+      </div>
+      <div className="card">
+        <h3>Birthdays this month ({bdays.length})</h3>
+        {bdays.length === 0 && <p className="sm muted">No birthdays this month. Staff can add dates when creating customers; you can set them in the customer modal.</p>}
+        {bdays.map(c => <div key={c.id} className="spread" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', gap: 8 }}>
+          <span className="grow"><b>{c.name || 'Customer'}</b> <span className="muted num sm">{c.phone}</span>
+            <div className="xs muted">{c._b.getDate() + ' ' + c._b.toLocaleString('en', { month: 'long' })}{claims.has(c.id) ? ' · credit given this year' : ''}</div></span>
+          <span className="row">
+            {mk && mk.birthday_paise > 0 && !claims.has(c.id) && <button className="btn slim primary" onClick={() => claimBday(c)}>Credit {inr(mk.birthday_paise)}</button>}
+            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/' + (() => { let d = (c.phone || '').replace(/\D/g, ''); if (d.length === 10) d = '91' + d; return d })() + '?text=' + encodeURIComponent('Happy birthday, ' + (c.name || 'friend') + '! Come celebrate with us at ' + rest.name + ' — a little something is waiting for you.')}>Wish</a>
+          </span>
+        </div>)}
+        <h3 style={{ marginTop: 14 }}>Anniversaries this month ({annivs.length})</h3>
+        {annivs.map(c => <div key={c.id} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
+          <span><b>{c.name || 'Customer'}</b> <span className="muted num">{c.phone}</span></span>
+          <span className="muted xs">{c._a.getDate() + ' ' + c._a.toLocaleString('en', { month: 'long' })}</span>
+        </div>)}
+        {annivs.length === 0 && <p className="sm muted">None recorded.</p>}
+      </div>
+      <div className="card">
+        <div className="spread"><h3>Guest feedback</h3>{fbAvg && <span className="chip a">avg {fbAvg} / 5 ({fbList.length})</span>}</div>
+        {fbList.length === 0 && <p className="sm muted">No feedback yet — staff can request it after each bill in the Staff portal.</p>}
+        {fbList.map(f => <div key={f.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
+          <span><b className="num" style={{ color: '#8F6A12' }}>{'★'.repeat(f.stars)}{'☆'.repeat(5 - f.stars)}</b> <span className="muted">{f.customers?.name || ''}</span>{f.comment && <div className="xs muted">"{f.comment}"</div>}</span>
+          <span className="muted xs">{fmtDate(f.created_at)}</span>
+        </div>)}
+        {fbList.filter(f => f.stars >= 4 && f.comment).length > 0 && <div style={{ height: 10 }} />
+        }
+        {fbList.filter(f => f.stars >= 4 && f.comment).length > 0 && <button className="btn" onClick={() => downloadCsv(`testimonials-${rest.slug}.csv`, [
+          ['Date', 'Stars', 'Name', 'Comment'],
+          ...fbList.filter(f => f.stars >= 4 && f.comment).map(f => [fmtDate(f.created_at), f.stars, f.customers?.name || '', f.comment]),
+        ])}>Export testimonials (4-5 star comments)</button>}
+      </div>
+    </>}
+
     {tab === 'campaigns' && <div className="card">
       <h2>Campaigns — bring customers back</h2>
       <p className="sm muted">Pick a segment, write one message with placeholders {'{name}'} {'{wallet}'} {'{points}'}, then send. Assisted mode opens each customer's WhatsApp with the message pre-filled and tracks your progress — no retyping.</p>
@@ -456,7 +616,7 @@ export default function Admin() {
       {campList && <>
         <p className="sm" style={{ marginTop: 10 }}><b>{campList.length}</b> in this segment · <b>{sentIds.length}</b> opened today</p>
         {campList.length > 0 && <div className="card" style={{ background: '#F8F4EC', marginBottom: 12 }}>
-          <h3>Assisted sending {campIdx < campList.length ? `— next: ${campList[campIdx].name || campList[campIdx].phone} (${campIdx + 1}/${campList.length})` : '— done'}</h3>
+          <h3>Assisted sending {campIdx < campList.length ? '— next: ' + (campList[campIdx].name || campList[campIdx].phone) + ' (' + (campIdx + 1) + '/' + campList.length + ')' : '— done'}</h3>
           <div className="bar" style={{ margin: '8px 0' }}><div style={{ width: (sentIds.length / campList.length * 100) + '%' }} /></div>
           <div className="row">
             <button className="btn primary slim grow" disabled={campIdx >= campList.length} onClick={() => openNext(false)}>Open in WhatsApp</button>
@@ -466,7 +626,7 @@ export default function Admin() {
           <div style={{ height: 8 }} />
           <button className="btn slim" onClick={copyNumbers}>Copy all phone numbers</button>
           <p className="xs muted" style={{ marginTop: 8 }}>
-            Tip: WhatsApp bans numbers that blast identical messages — keep it under ~25 per day from one number, and the personalization above helps. Broadcast lists need recipients to have your number saved; direct opens below do not.
+            Tip: WhatsApp bans numbers that blast identical messages — keep it under ~25 per day from one number, and the personalization above helps.
           </p>
         </div>}
         {campList.map(c => <div key={c.id} className="spread" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', gap: 10 }}>
@@ -571,7 +731,14 @@ export default function Admin() {
             <div className="grow"><div className="xs muted">WALLET</div><div className="num" style={{ fontSize: 22, fontWeight: 800 }}>{inr(sel.wallet_balance_paise)}</div></div>
             <div className="grow"><div className="xs muted">POINTS</div><div className="num" style={{ fontSize: 22, fontWeight: 800 }}>{sel.points_balance} <span className="chip">{tierFor(sel.lifetime_points, (pc?.tiers) || [])?.name || 'Bronze'}</span></div></div>
           </div>
+          {sel.referral_code && <p className="sm">Referral code: <b style={{ letterSpacing: 2 }}>{sel.referral_code}</b></p>}
           {sel.prog.map(p => <div key={p.stamp_rule_id} className="sm">{p.stamp_rules.name}: <b className="num">{p.stamps_earned}</b> stamps, {(p.rewards_redeemed || 0)} redeemed</div>)}
+          <div className="row" style={{ marginTop: 10 }}>
+            <div className="grow"><label className="label">Birthday</label><input className="input" type="date" value={sel.birth} onChange={e => setSel({ ...sel, birth: e.target.value })} /></div>
+            <div className="grow"><label className="label">Anniversary</label><input className="input" type="date" value={sel.anniv} onChange={e => setSel({ ...sel, anniv: e.target.value })} /></div>
+          </div>
+          <div style={{ height: 8 }} />
+          <button className="btn slim" onClick={saveCustDates}>Save dates</button>
           <h3 style={{ marginTop: 12 }}>Recent bills</h3>
           {sel.orders.map(o => <div key={o.id} className="spread sm" style={{ padding: '4px 0' }}><span className="muted">{fmtDate(o.created_at)}{o.created_by_name ? ' · ' + o.created_by_name : ''}</span><b className="num">{inr(o.total_paise)}</b></div>)}
           <h3 style={{ marginTop: 14 }}>Adjust wallet (audited)</h3>
