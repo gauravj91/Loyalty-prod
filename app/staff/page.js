@@ -3,28 +3,25 @@ import { useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { supabase } from '../../lib/supabase'
 import { inr, toPaise, fmtDate, tierFor, parseQr, errMsg, customerLink } from '../../lib/helpers'
+
 export default function Staff() {
   const [phase, setPhase] = useState('loading')
   const [err, setErr] = useState(''); const [busy, setBusy] = useState(false)
   const [rest, setRest] = useState(null); const [me, setMe] = useState(null)
   const [outlets, setOutlets] = useState([]); const [outletId, setOutletId] = useState('')
   const [scheme, setScheme] = useState(null)
-  // current customer
   const [cust, setCust] = useState(null)
   const [prog, setProg] = useState([]); const [cfg, setCfg] = useState(null)
   const [rewards, setRewards] = useState([]); const [redCount, setRedCount] = useState({})
   const [recent, setRecent] = useState([])
   const [results, setResults] = useState(null)
   const [orders, setOrders] = useState([]); const [wtx, setWtx] = useState([])
-  // bill
   const [items, setItems] = useState([])
   const [f, setF] = useState({ name: '', category: '', qty: '1', price: '' })
   const [walletAmt, setWalletAmt] = useState(''); const [payMethod, setPayMethod] = useState('cash')
   const [rewardSel, setRewardSel] = useState(null); const [stampSel, setStampSel] = useState(null)
   const [result, setResult] = useState(null)
-  // top-up
   const [topAmt, setTopAmt] = useState(''); const [topMethod, setTopMethod] = useState('cash')
-  // ui
   const [tab, setTab] = useState('bill')
   const [scanning, setScanning] = useState(false)
   const [phone, setPhone] = useState(''); const [manual, setManual] = useState('')
@@ -72,7 +69,7 @@ export default function Staff() {
     setRecent(list.slice(0, 8))
   }
 
-    async function findCustomer({ qr, term }) {
+  async function findCustomer({ qr, term }) {
     setBusy(true); setErr(''); setResults(null)
     const clean = (term || '').replace(/[,()]/g, '')
     const base = supabase.from('customers').select('*').eq('restaurant_id', me.restaurant_id)
@@ -98,14 +95,13 @@ export default function Staff() {
         text => { stopScan(); findCustomer({ qr: parseQr(text).qr }) },
         () => {}
       )
-    } catch { setErr('Camera not available — enter the code or search by phone below.'); setScanning(false) }
+    } catch { setErr('Camera not available — enter the code or search by name/phone below.'); setScanning(false) }
   }
   async function stopScan() {
     try { await scannerRef.current?.stop(); scannerRef.current?.clear() } catch {}
     setScanning(false)
   }
 
-  // ---- bill ----
   function addItem(preset) {
     const name = preset?.name ?? f.name
     const category = preset?.category ?? f.category
@@ -139,6 +135,7 @@ export default function Staff() {
   }
 
   async function submitOrder() {
+    if (!outletId) return setErr('No outlet set. Ask the admin to add one under Admin, Outlets, then reload this page.')
     if (!items.length) return setErr('Add at least one item.')
     if (toPaise(walletAmt) > maxWallet()) return setErr('Wallet amount exceeds what is available / payable.')
     setBusy(true); setErr('')
@@ -159,8 +156,10 @@ export default function Staff() {
   }
 
   async function doTopup() {
+    if (!outletId) return setErr('No outlet set. Ask the admin to add one under Admin, Outlets, then reload this page.')
     const amt = toPaise(topAmt)
     if (amt <= 0) return setErr('Enter an amount.')
+    if (!cust) return setErr('Select a customer first.')
     if (scheme && amt < scheme.min_topup_paise) return setErr('Minimum top-up is ' + inr(scheme.min_topup_paise))
     setBusy(true); setErr('')
     const { data, error } = await supabase.rpc('topup_wallet', {
@@ -191,11 +190,11 @@ export default function Staff() {
 
   const t = cust && cfg ? tierFor(cust.lifetime_points, cfg.tiers) : null
 
-    return <div className="wrap">
-      <div className="spread" style={{ marginBottom: 14 }}>
-      <h1>{rest.name} <span className="muted" style={{ fontSize: 15 }}>· Admin</span></h1>
+  return <div className="wrap">
+    <div className="spread" style={{ marginBottom: 8 }}>
+      <h1>{rest.name}</h1>
       <span className="row">
-        <button className="btn slim" onClick={() => { window.location.href = '/staff' }}>Staff view</button>
+        {me && me.role !== 'staff' && <button className="btn slim" onClick={() => { window.location.href = '/admin' }}>Admin view</button>}
         <button className="btn slim" onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}>Log out</button>
       </span>
     </div>
@@ -207,7 +206,6 @@ export default function Staff() {
         : <span className="chip">{outlets[0]?.name || 'No outlet'}</span>}
     </div>
 
-    {/* ---- find customer ---- */}
     <div className="card">
       <h2>Customer</h2>
       <div id="reader" style={{ display: scanning ? 'block' : 'none' }} />
@@ -218,7 +216,7 @@ export default function Staff() {
           <input className="input grow" placeholder="Or enter QR code" value={manual} onChange={e => setManual(e.target.value)} />
           <button className="btn slim" disabled={busy || !manual} onClick={() => findCustomer({ qr: manual.trim() })}>Go</button>
         </div>
-               <div className="row" style={{ marginTop: 8 }}>
+        <div className="row" style={{ marginTop: 8 }}>
           <input className="input grow" placeholder="Search name or phone" value={phone} onChange={e => setPhone(e.target.value)} />
           <button className="btn slim" disabled={busy || phone.length < 3} onClick={() => findCustomer({ term: phone })}>Search</button>
         </div>
@@ -262,13 +260,13 @@ export default function Staff() {
     </div>
     {err && <div className="err sm">{err}</div>}
 
-    {/* ---- actions ---- */}
     {cust && <>
       <div className="tabs">
         <button className={tab === 'bill' ? 'on' : ''} onClick={() => setTab('bill')}>New bill</button>
         <button className={tab === 'topup' ? 'on' : ''} onClick={() => setTab('topup')}>Top-up</button>
+        <button className={tab === 'hist' ? 'on' : ''} onClick={() => setTab('hist')}>History</button>
         <button className={tab === 'addcust' ? 'on' : ''} onClick={() => setTab('addcust')}>Add customer</button>
-        <button className={tab === 'hist' ? 'on' : ''} onClick={() => setTab('hist')}>History</button>      </div>
+      </div>
 
       {tab === 'bill' && <div className="card">
         {unlocked().map(p => <div key={p.stamp_rule_id} className="row" style={{ marginBottom: 8 }}>
@@ -318,7 +316,7 @@ export default function Staff() {
           <option value="upi">UPI</option><option value="other">Other</option>
         </select>
         <div style={{ height: 16 }} />
-        <button className="btn primary btn" disabled={busy} onClick={submitOrder}>
+        <button className="btn primary" disabled={busy} onClick={submitOrder}>
           {busy ? 'Saving…' : 'Confirm bill — collect ' + inr(estTotal() - toPaise(walletAmt))}
         </button>
       </div>}
@@ -345,7 +343,7 @@ export default function Staff() {
         <button className="btn primary" disabled={busy} onClick={doTopup}>{busy ? 'Saving…' : 'Confirm top-up'}</button>
       </div>}
 
-           {tab === 'hist' && <div className="card">
+      {tab === 'hist' && <div className="card">
         <h2>Recent activity</h2>
         {orders.length === 0 && wtx.length === 0 && <p className="sm muted">Nothing yet for this customer.</p>}
         {wtx.filter(x => x.type === 'topup' || x.type === 'adjustment').map(x => <div key={x.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
@@ -359,6 +357,16 @@ export default function Staff() {
         </div>)}
       </div>}
 
+      {tab === 'addcust' && <div className="card">
+        <p className="sm muted">Creates a new loyalty customer and shows their QR + personal portal link.</p>
+        <label className="label">Name (optional)</label>
+        <input className="input" value={nc.name} onChange={e => setNc({ ...nc, name: e.target.value })} />
+        <label className="label">Phone</label>
+        <input className="input" type="tel" value={nc.phone} onChange={e => setNc({ ...nc, phone: e.target.value })} />
+        <div style={{ height: 16 }} />
+        <button className="btn primary" disabled={busy} onClick={addCustomer}>{busy ? 'Creating…' : 'Create customer'}</button>
+      </div>}
+    </>}
 
     {!cust && <div className="card">
       <h3>New customer? Add them here</h3>
@@ -368,13 +376,12 @@ export default function Staff() {
       <button className="btn primary" disabled={busy} onClick={addCustomer}>{busy ? 'Creating…' : 'Create customer'}</button>
     </div>}
 
-    {/* ---- success panel ---- */}
     {result && <div className="overlay" onClick={() => setResult(null)}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         {result.kind === 'topup'
           ? <>
               <h2>Top-up done</h2>
-              <p>Added <b className="num">{inr(result.bonus_paise ? 0 : 0)}</b></p>
+              <p>Added <b className="num">{inr(result.balance_after - result.bonus_paise)}</b></p>
               <p className="sm muted">Bonus {inr(result.bonus_paise)} · New balance <b className="num">{inr(result.balance_after)}</b></p>
             </>
           : <>
@@ -397,7 +404,7 @@ export default function Staff() {
     {link && <div className="overlay" onClick={() => setLink(null)}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <h2>Customer created</h2>
-        <p className="sm muted">Customer scans/photographs this QR. It is their portal link and their loyalty card.</p>
+        <p className="sm muted">Customer scans or photographs this QR. It is their portal link and their loyalty card.</p>
         <div style={{ padding: 16 }}><QRCodeSVG value={link.url} size={220} /></div>
         <p className="xs muted" style={{ wordBreak: 'break-all' }}>{link.url}</p>
         <div style={{ height: 12 }} />
