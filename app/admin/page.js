@@ -119,7 +119,7 @@ export default function Admin() {
     const revenue = ords.reduce((s, x) => s + x.total_paise, 0)
     const bills = ords.length
     setStats({
-      revenue, bills, bills,
+      revenue, bills,
       customers: active.size,
       walletSales: ords.reduce((s, x) => s + x.wallet_paid_paise, 0),
       byMethod, itemAgg,
@@ -162,6 +162,7 @@ export default function Admin() {
     const { data } = await supabase.from('outlets').select('*').eq('restaurant_id', rest.id)
     setOuts(data || [])
   }
+
   async function delScheme() {
     if (!ws) return
     if (!confirm('Delete the wallet scheme? New top-ups will earn no bonus until you save a new one.')) return
@@ -189,6 +190,7 @@ export default function Admin() {
     error ? setErr(errMsg(error)) : flash('Reward deleted')
     loadOffers()
   }
+
   const flash = m => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 3000) }
 
   async function saveScheme() {
@@ -493,18 +495,16 @@ export default function Admin() {
         <div className="row" style={{ marginTop: 12 }}>
           <button className="btn primary grow" onClick={saveScheme}>Save wallet scheme</button>
           {ws && <button className="btn danger" style={{ width: 'auto' }} onClick={delScheme}>Delete</button>}
-        </div>      </S>
+        </div>
+      </S>
       <S title={`Stamp rules (${rules.length})`} open>
         {rules.map(r => <div key={r.id} className="spread sm" style={{ padding: '6px 0' }}>
           <span><b>{r.name}</b> — {r.target_value} ×{r.required_count} → {r.reward_type === 'free_item' ? r.reward_label : (r.reward_type === 'percent_discount' ? r.reward_value + '% off' : inr(r.reward_value) + ' off')}</span>
           <span className="row">
-          <span className="row">
-            <button className={'chip ' + (r.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={() => toggle('rewards', r.id, r.active)}>{r.active ? 'Active' : 'Off'}</button>
-            <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delReward(r)}>Del</button>
+            <button className={'chip ' + (r.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={() => toggle('stamp_rules', r.id, r.active)}>{r.active ? 'Active' : 'Off'}</button>
+            <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delRule(r)}>Del</button>
           </span>
-        </div>)}            <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delRule(r)}>Del</button>
-          </span>
-        </div>)}        </div>)}
+        </div>)}
         <div className="row"><input className="input grow" placeholder="Rule name e.g. Coffee card" value={ruleF.name} onChange={e => setRuleF({ ...ruleF, name: e.target.value })} />
           <select className="select" style={{ width: 120 }} value={ruleF.target_type} onChange={e => setRuleF({ ...ruleF, target_type: e.target.value })}><option value="item">Item</option><option value="category">Category</option></select>
           <input className="input" style={{ width: 110 }} placeholder="Target" value={ruleF.target_value} onChange={e => setRuleF({ ...ruleF, target_value: e.target.value })} /></div>
@@ -524,7 +524,10 @@ export default function Admin() {
       <S title={`Points rewards (${rws.length})`}>
         {rws.map(r => <div key={r.id} className="spread sm" style={{ padding: '6px 0' }}>
           <span><b>{r.name}</b> — {r.required_points} pts, worth {inr(r.value_paise)}{r.max_per_customer ? `, max ${r.max_per_customer}×` : ''}</span>
-          <button className={'chip ' + (r.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={() => toggle('rewards', r.id, r.active)}>{r.active ? 'Active' : 'Off'}</button>
+          <span className="row">
+            <button className={'chip ' + (r.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={() => toggle('rewards', r.id, r.active)}>{r.active ? 'Active' : 'Off'}</button>
+            <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delReward(r)}>Del</button>
+          </span>
         </div>)}
         <div className="row" style={{ marginTop: 8 }}><input className="input grow" placeholder="Reward name" value={rwF.name} onChange={e => setRwF({ ...rwF, name: e.target.value })} />
           <input className="input" style={{ width: 110 }} type="number" placeholder="Points" value={rwF.required_points} onChange={e => setRwF({ ...rwF, required_points: e.target.value })} />
