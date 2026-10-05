@@ -43,14 +43,21 @@ export default function Staff() {
       .eq('restaurant_id', ru[0].restaurant_id).eq('active', true)
       .order('created_at', { ascending: false }).limit(1)
     setScheme(sch?.[0] || null)
+    const savedId = (() => { try { return sessionStorage.getItem('tessera_staff_cust') } catch (e) { return null } })()
+    if (savedId) {
+      const { data: sc } = await supabase.from('customers').select('*').eq('id', savedId).maybeSingle()
+      if (sc) loadCustomer(sc)
+    }
     setPhase('ready')
   })() }, [])
 
   async function loadCustomer(c) {
     setCust(c); setResult(null); setItems([]); setWalletAmt('')
     setRewardSel(null); setStampSel(null); setTab('bill'); setErr(''); setResults(null)
+    try { sessionStorage.setItem('tessera_staff_cust', c.id) } catch (e) {}
     const rid = c.restaurant_id
-    const [pr, cf, rw, rd, ro, wt] = await Promise.all([
+    const [cf2, pr, cf, rw, rd, ro, wt] = await Promise.all([
+      supabase.from('customers').select('*').eq('id', c.id).single(),
       supabase.from('customer_stamp_progress').select('*, stamp_rules(name, required_count, reward_type, reward_value, reward_label, target_value)').eq('customer_id', c.id),
       supabase.from('points_config').select('*').eq('restaurant_id', rid).maybeSingle(),
       supabase.from('rewards').select('*').eq('restaurant_id', rid).eq('active', true),
@@ -58,6 +65,7 @@ export default function Staff() {
       supabase.from('orders').select('*').eq('restaurant_id', rid).eq('customer_id', c.id).order('created_at', { ascending: false }).limit(15),
       supabase.from('wallet_transactions').select('*').eq('customer_id', c.id).order('created_at', { ascending: false }).limit(10),
     ])
+    if (cf2.data) setCust(cf2.data)
     setProg(pr.data || []); setCfg(cf.data); setRewards(rw.data || [])
     setOrders(ro.data || []); setWtx(wt.data || [])
     const counts = {}; (rd.data || []).forEach(x => counts[x.reward_id] = (counts[x.reward_id] || 0) + 1)
@@ -68,7 +76,6 @@ export default function Staff() {
     }))
     setRecent(list.slice(0, 8))
   }
-
   async function findCustomer({ qr, term }) {
     setBusy(true); setErr(''); setResults(null)
     const clean = (term || '').replace(/[,()]/g, '')
@@ -212,9 +219,13 @@ export default function Staff() {
       {!cust && <>
         {!scanning && <button className="btn primary" onClick={startScan}>Scan customer QR</button>}
         {scanning && <button className="btn" onClick={stopScan}>Stop camera</button>}
-        <div className="row" style={{ marginTop: 10 }}>
-          <input className="input grow" placeholder="Or enter QR code" value={manual} onChange={e => setManual(e.target.value)} />
+              <div className="row" style={{ marginTop: 10 }}>
+          <input className="input grow" placeholder="Or enter QR code" value={manual} onChange={e => setManual(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && manual.trim()) findCustomer({ qr: manual.trim() }) }} />
           <button className="btn slim" disabled={busy || !manual} onClick={() => findCustomer({ qr: manual.trim() })}>Go</button>
+        </div>
+        <div className="row" style={{ marginTop: 8 }}>
+          <input className="input grow" placeholder="Search name or phone, then press Enter" value={phone} onChange={e => setPhone(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && phone.length >= 3) findCustomer({ term: phone }) }} />
+          <button className="btn slim" disabled={busy || phone.length < 3} onClick={() => findCustomer({ term: phone })}>Search</button>
         </div>
         <div className="row" style={{ marginTop: 8 }}>
           <input className="input grow" placeholder="Search name or phone" value={phone} onChange={e => setPhone(e.target.value)} />
@@ -233,7 +244,7 @@ export default function Staff() {
             <div style={{ fontWeight: 800, fontSize: 18 }}>{cust.name || 'Customer'}</div>
             <div className="muted sm num">{cust.phone}</div>
           </div>
-          <button className="btn slim" onClick={() => { setCust(null); setItems([]) }}>Change</button>
+          <button className="btn slim" onClick={() => { try { sessionStorage.removeItem('tessera_staff_cust') } catch (e) {} setCust(null); setItems([]) }}>Change</button>
         </div>
         <div className="row" style={{ marginTop: 12 }}>
           <div className="grow">
@@ -309,8 +320,7 @@ export default function Staff() {
         </div>}
 
         <label className="label">Pay from wallet (max {inr(maxWallet())})</label>
-        <input className="input" type="number" min="0" step="0.01" value={walletAmt} onChange={e => setWalletAmt(e.target.value)} placeholder="0" />
-        <label className="label">Rest paid by</label>
+        <input className="input" type="number" min="0" max={(maxWallet() / 100).toFixed(2)} step="0.01" value={walletAmt} onChange={e => { const n = parseFloat(e.target.value); setWalletAmt(e.target.value === '' || isNaN(n) ? '' : String(Math.min(n, maxWallet() / 100))) }} placeholder="0" />        <label className="label">Rest paid by</label>
         <select className="select" value={payMethod} onChange={e => setPayMethod(e.target.value)}>
           <option value="cash">Cash</option><option value="card">Card</option>
           <option value="upi">UPI</option><option value="other">Other</option>
