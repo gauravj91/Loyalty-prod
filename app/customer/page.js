@@ -1,25 +1,32 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { supabase } from '../../lib/supabase'
-import { inr, fmtDate, tierFor, nextTierFor, errMsg } from '../../lib/helpers'
+import { supabase } from '../lib/supabase'
+import { inr, fmtDate, tierFor, nextTierFor, errMsg } from '../lib/helpers'
 
 const LS = 'tessera_customer'
 
 export default function CustomerPortal() {
-  const [status, setStatus] = useState('loading') // loading | need_link | ready
+  const [status, setStatus] = useState('loading')
   const [err, setErr] = useState('')
   const [cust, setCust] = useState(null)
+  const [mk, setMk] = useState(null)
   const [rules, setRules] = useState([]); const [prog, setProg] = useState([])
   const [cfg, setCfg] = useState(null); const [rewards, setRewards] = useState([]); const [reds, setReds] = useState([])
   const [txns, setTxns] = useState([]); const [orders, setOrders] = useState([])
   const [open, setOpen] = useState(null); const [showQr, setShowQr] = useState(false)
+  const [invite, setInvite] = useState(null)
+  const [fbFor, setFbFor] = useState(null); const [fbStars, setFbStars] = useState(0)
+  const [fbComment, setFbComment] = useState(''); const [fbDone, setFbDone] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => { boot() }, [])
 
   async function boot() {
     const q = new URLSearchParams(window.location.search)
     let slug = q.get('slug'), qr = q.get('qr'), secret = q.get('k')
+    const ref = q.get('ref'), fb = q.get('fb')
+    if (ref) setInvite(ref.toUpperCase())
     if (!qr) {
       const saved = JSON.parse(localStorage.getItem(LS) || 'null')
       if (saved) ({ slug, qr, secret } = saved)
@@ -32,6 +39,7 @@ export default function CustomerPortal() {
       if (error) throw error
       localStorage.setItem(LS, JSON.stringify({ slug, qr, secret }))
       await load(cid)
+      if (fb) setFbFor(fb)
     } catch (e) { setErr(errMsg(e)); setStatus('need_link') }
   }
 
@@ -40,7 +48,7 @@ export default function CustomerPortal() {
     if (c.error) throw c.error
     setCust(c.data)
     const rid = c.data.restaurant_id
-    const [ru, pr, cf, rw, rd, tx, or] = await Promise.all([
+    const [ru, pr, cf, rw, rd, tx, or, mkq] = await Promise.all([
       supabase.from('stamp_rules').select('*').eq('restaurant_id', rid).eq('active', true),
       supabase.from('customer_stamp_progress').select('*').eq('customer_id', cid),
       supabase.from('points_config').select('*').eq('restaurant_id', rid).maybeSingle(),
@@ -48,11 +56,23 @@ export default function CustomerPortal() {
       supabase.from('reward_redemptions').select('reward_id').eq('customer_id', cid),
       supabase.from('wallet_transactions').select('*').eq('customer_id', cid).order('created_at', { ascending: false }).limit(15),
       supabase.from('orders').select('*').eq('customer_id', cid).order('created_at', { ascending: false }).limit(10),
+      supabase.from('marketing_config').select('*').eq('restaurant_id', rid).maybeSingle(),
     ])
     setRules(ru.data || []); setProg(pr.data || []); setCfg(cf.data)
     setRewards(rw.data || []); setReds(rd.data || [])
     setTxns(tx.data || []); setOrders(or.data || [])
+    setMk(mkq.data || null)
     setStatus('ready')
+  }
+
+  async function submitFb() {
+    if (!fbStars) return
+    const { error } = await supabase.from('feedback').insert({
+      restaurant_id: cust.restaurant_id, customer_id: cust.id, order_id: fbFor,
+      stars: fbStars, comment: fbComment.trim() || null,
+    })
+    if (error) return setErr(errMsg(error))
+    setFbDone(true)
   }
 
   async function logout() {
@@ -64,11 +84,22 @@ export default function CustomerPortal() {
   if (status === 'need_link') return <div className="wrap" style={{ paddingTop: 60 }}>
     <div style={{ textAlign: 'center', fontWeight: 800, fontSize: 22, color: '#C2511F' }}>Tessera</div>
     <div className="card" style={{ marginTop: 20 }}>
-      <h2>Open your loyalty page</h2>
-      <p className="sm muted" style={{ marginTop: 8 }}>
-        This page needs your personal loyalty link. Open the link or scan the QR card your restaurant gave you —
-        it looks like <b>…/customer?slug=…&amp;qr=…&amp;k=…</b>. Tip: bookmark it or keep the photo of your QR card.
-      </p>
+      {invite
+        ? <>
+            <h2>You're invited!</h2>
+            <p className="sm muted" style={{ marginTop: 8 }}>
+              Visit the restaurant and tell the counter your friend's referral code — you'll both get wallet credit when you join.
+            </p>
+            <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: 4, textAlign: 'center', padding: '12px 0' }}>{invite}</div>
+            <button className="btn" onClick={() => { navigator.clipboard?.writeText(invite); setCopied(true) }}>{copied ? 'Copied' : 'Copy code'}</button>
+          </>
+        : <>
+            <h2>Open your loyalty page</h2>
+            <p className="sm muted" style={{ marginTop: 8 }}>
+              This page needs your personal loyalty link. Open the link or scan the QR card your restaurant gave you —
+              it looks like <b>…/customer?slug=…&amp;qr=…&amp;k=…</b>. Tip: bookmark it or keep the photo of your QR card.
+            </p>
+          </>}
       {err && <div className="err sm" style={{ marginTop: 12 }}>{err}</div>}
     </div>
   </div>
@@ -80,12 +111,16 @@ export default function CustomerPortal() {
     ...orders.map(o => ({ at: o.created_at, kind: 'order', o })),
     ...txns.filter(x => x.type === 'topup' || x.type === 'adjustment').map(x => ({ at: x.created_at, kind: 'wallet', x })),
   ].sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 10)
+  const shareTxt = 'Eat at ' + (cust.restaurants?.name || 'our restaurant') + '!' +
+    (mk && mk.referrer_paise > 0
+      ? ' Use my code ' + cust.referral_code + ' when you join their loyalty program — we both get ' + inr(mk.referrer_paise) + ' in wallet credit.'
+      : ' Ask for my code ' + cust.referral_code + ' when you join their loyalty program.')
 
   return <div className="wrap">
     <div className="spread" style={{ marginBottom: 16 }}>
       <div>
         <div style={{ fontWeight: 800, fontSize: 20, color: '#C2511F' }}>{cust.restaurants?.name || 'Loyalty'}</div>
-        <div className="muted sm">Hi {cust.name || 'there'} 👋</div>
+        <div className="muted sm">Hi {cust.name || 'there'}</div>
       </div>
       <button className="btn slim" onClick={logout}>Log out</button>
     </div>
@@ -107,6 +142,19 @@ export default function CustomerPortal() {
         {ready.map(r => <div key={r.id} className="chip g" style={{ margin: '2px 4px 2px 0' }}>You can claim: {r.name}</div>)}
       </div>}
     </div>
+
+    {cust.referral_code && <div className="card">
+      <h2>Refer a friend</h2>
+      <p className="sm muted" style={{ marginTop: 4 }}>
+        {mk && mk.referrer_paise > 0
+          ? 'Share your code — when they join, you get ' + inr(mk.referrer_paise) + ' and they get ' + inr(mk.referee_paise) + ' in wallet credit.'
+          : 'Share your code — when they join and quote it at the counter, you both get wallet credit.'}
+      </p>
+      <div className="spread" style={{ marginTop: 8 }}>
+        <b style={{ fontSize: 24, letterSpacing: 4 }}>{cust.referral_code}</b>
+        <a className="btn slim primary" target="_blank" rel="noreferrer" href={'https://wa.me/?text=' + encodeURIComponent(shareTxt)}>Share on WhatsApp</a>
+      </div>
+    </div>}
 
     {rules.length > 0 && <div className="card">
       <h2>My stamp cards</h2>
@@ -132,7 +180,7 @@ export default function CustomerPortal() {
               <span className="muted xs">{fmtDate(a.at)}</span>
             </div>
           : <div className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
-              <span><b className="num">{a.x.amount_paise > 0 ? '+' : ''}{inr(a.x.amount_paise)}</b> <span className="muted">{a.x.type === 'topup' ? 'wallet top-up' : 'adjustment'}</span></span>
+              <span><b className="num">{a.x.amount_paise > 0 ? '+' : ''}{inr(a.x.amount_paise)}</b> <span className="muted">{a.x.type === 'topup' ? 'wallet top-up' : (a.x.note || 'adjustment')}</span></span>
               <span className="muted xs">{fmtDate(a.at)}</span>
             </div>}
         {open === i && a.kind === 'order' && <div className="sm muted" style={{ padding: '8px 0 4px' }}>
@@ -152,6 +200,29 @@ export default function CustomerPortal() {
         <p className="sm muted">Let the staff scan this. Keep this page bookmarked.</p>
         <div style={{ height: 12 }} />
         <button className="btn primary" onClick={() => setShowQr(false)}>Done</button>
+      </div>
+    </div>}
+
+    {fbFor && <div className="overlay">
+      <div className="modal">
+        {!fbDone
+          ? <>
+              <h2>How was your visit?</h2>
+              <div className="row" style={{ justifyContent: 'center', margin: '14px 0' }}>
+                {[1, 2, 3, 4, 5].map(n => <button key={n} style={{ fontSize: 34, background: 'none', border: 'none', cursor: 'pointer', color: n <= fbStars ? '#C2511F' : '#D9D2C4', padding: 4 }} onClick={() => setFbStars(n)}>★</button>)}
+              </div>
+              {fbStars > 0 && <>
+                <input className="input" placeholder="Anything to add? (optional)" value={fbComment} onChange={e => setFbComment(e.target.value)} />
+                <div style={{ height: 12 }} />
+                <button className="btn primary" onClick={submitFb}>Send rating</button>
+              </>}
+            </>
+          : <>
+              <h2>Thank you!</h2>
+              <p className="sm muted" style={{ marginTop: 8 }}>Your rating means a lot to us.</p>
+            </>}
+        <div style={{ height: 12 }} />
+        <button className="btn" onClick={() => { setFbFor(null); try { const u = new URL(window.location.href); u.searchParams.delete('fb'); window.history.replaceState({}, '', u) } catch (e) {} }}>{fbDone ? 'Close' : 'Not now'}</button>
       </div>
     </div>}
   </div>
