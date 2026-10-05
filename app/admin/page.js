@@ -64,6 +64,7 @@ export default function Admin() {
   const [mk, setMk] = useState(null); const [mkF, setMkF] = useState({ referrer: '100', referee: '100', birthday: '0' })
   const [bdays, setBdays] = useState([]); const [annivs, setAnnivs] = useState([]); const [claims, setClaims] = useState(new Set())
   const [fbList, setFbList] = useState([])
+  const [todo, setTodo] = useState(null)
 
   useEffect(() => { (async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -77,11 +78,52 @@ export default function Admin() {
   })() }, [])
 
   useEffect(() => { if (!rest) return; loadOffers(); loadStaff(); loadOutlets() }, [rest])
-  useEffect(() => { if (rest && tab === 'overview') loadStats() }, [rest, tab, range])
+  useEffect(() => { if (rest && tab === 'overview') { loadStats(); loadTodo() } }, [rest, tab, range])
   useEffect(() => { if (rest && tab === 'customers') searchCusts('') }, [rest, tab])
   useEffect(() => { if (rest && tab === 'campaigns') buildCampaign() }, [rest, tab, campSeg, campPts])
   useEffect(() => { if (rest && tab === 'menu') loadMenu() }, [rest, tab])
   useEffect(() => { if (rest && tab === 'marketing') loadMarketing() }, [rest, tab])
+
+  async function loadTodo() {
+    const t0 = dayStart(0), y0 = dayStart(1)
+    const [cs, fbq, fbid, orq, wtq, oidle, mkq] = await Promise.all([
+      supabase.from('customers').select('id, name, phone, birth_date, anniversary_date, qr_code, qr_secret').eq('restaurant_id', rest.id).limit(500),
+      supabase.from('feedback').select('stars, order_id, created_at, customers(name)').eq('restaurant_id', rest.id).gte('created_at', dayStart(6)).order('created_at', { ascending: false }).limit(50),
+      supabase.from('feedback').select('order_id').eq('restaurant_id', rest.id).gte('created_at', dayStart(6)),
+      supabase.from('orders').select('id, total_paise, other_paid_paise, payment_method, created_at, customer_id, customers(name)').eq('restaurant_id', rest.id).gte('created_at', y0).order('created_at', { ascending: false }).limit(300),
+      supabase.from('wallet_transactions').select('amount_paise, payment_method, created_at').eq('restaurant_id', rest.id).eq('type', 'topup').gte('created_at', y0),
+      supabase.from('orders').select('customer_id, created_at').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(1000),
+      supabase.from('marketing_config').select('*').eq('restaurant_id', rest.id).maybeSingle(),
+    ])
+    if (mkq.data) setMk(mkq.data)
+    const todayMid = new Date(); todayMid.setHours(0, 0, 0, 0)
+    const rows = cs.data || []
+    const cMap = {}; rows.forEach(c => cMap[c.id] = c)
+    const yOrds = (orq.data || []).filter(o => new Date(o.created_at) < new Date(t0))
+    const yCash = yOrds.filter(o => o.payment_method === 'cash').reduce((s, o) => s + o.other_paid_paise, 0)
+      + (wtq.data || []).filter(x => x.payment_method === 'cash' && new Date(x.created_at) < new Date(t0)).reduce((s, x) => s + x.amount_paise, 0)
+    const occ = ds => { if (!ds) return null; const d = new Date(ds + 'T00:00:00'); let o = new Date(todayMid.getFullYear(), d.getMonth(), d.getDate()); if (o < todayMid) o = new Date(todayMid.getFullYear() + 1, d.getMonth(), d.getDate()); return o }
+    const withOcc = (list, field) => list.map(c => ({ ...c, _o: occ(c[field]) })).filter(c => c._o && (c._o - todayMid) <= 7 * 86400000).sort((a, b) => a._o - b._o)
+    const bdays = withOcc(rows.filter(c => c.birth_date), 'birth_date').map(c => {
+      const d = new Date(c.birth_date + 'T00:00:00')
+      return { ...c, today: d.getDate() === todayMid.getDate() && d.getMonth() === todayMid.getMonth() }
+    })
+    const annivs = withOcc(rows.filter(c => c.anniversary_date), 'anniversary_date')
+    const bad = (fbq.data || []).filter(f => f.stars <= 2)
+    const fbSet = new Set((fbid.data || []).map(x => x.order_id))
+    const noFb = (orq.data || []).filter(o => o.customer_id && !fbSet.has(o.id)).slice(0, 5)
+    const lastVisit = {}
+    ;(oidle.data || []).forEach(o => { if (o.customer_id && !lastVisit[o.customer_id]) lastVisit[o.customer_id] = o.created_at })
+    const idle = rows.filter(c => { const lv = lastVisit[c.id]; return !lv || (Date.now() - new Date(lv).getTime()) > 14 * 86400000 }).length
+    setTodo({ ySales: yOrds.reduce((s, o) => s + o.total_paise, 0), yBills: yOrds.length, yCash, bdays, annivs, bad, noFb, idle, cMap })
+  }
+  async function creditBday(c) {
+    if (!confirm('Credit the birthday bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
+    const { error } = await supabase.rpc('claim_birthday', { p_restaurant_id: rest.id, p_customer_id: c.id })
+    error ? setErr(errMsg(error)) : flash('Birthday credit given')
+    loadTodo()
+  }
+  function waNum(p) { let d = (p || '').replace(/\D/g, ''); if (d.length === 10) d = '91' + d; return d }
 
   async function loadStats() {
     const from = dayStart(range)
@@ -363,9 +405,7 @@ export default function Admin() {
     return campMsg.replaceAll('{name}', c.name || 'friend').replaceAll('{wallet}', inr(c.wallet_balance_paise)).replaceAll('{points}', String(c.points_balance))
   }
   function waLink(c) {
-    let d = (c.phone || '').replace(/\D/g, '')
-    if (d.length === 10) d = '91' + d
-    return 'https://wa.me/' + d + '?text=' + encodeURIComponent(campText(c))
+    return 'https://wa.me/' + waNum(c.phone) + '?text=' + encodeURIComponent(campText(c))
   }
   function sentKey() { return 'tessera_camp_' + rest.slug + '_' + campSeg }
   function openNext(skip) {
@@ -380,8 +420,7 @@ export default function Admin() {
   }
   function copyNumbers() {
     if (!campList) return
-    const nums = campList.map(c => { let d = (c.phone || '').replace(/\D/g, ''); if (d.length === 10) d = '91' + d; return d }).join(', ')
-    navigator.clipboard?.writeText(nums)
+    navigator.clipboard?.writeText(campList.map(c => waNum(c.phone)).join(', '))
     flash('All phone numbers copied — paste them while creating a WhatsApp broadcast list.')
   }
 
@@ -414,6 +453,52 @@ export default function Admin() {
     </div>
 
     {tab === 'overview' && <>
+      {todo && <div className="card">
+        <h2>Today · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}</h2>
+        <div className="row" style={{ flexWrap: 'wrap', margin: '10px 0' }}>
+          <span className="chip">Yesterday: {inr(todo.ySales)} · {todo.yBills} bill(s)</span>
+          <span className="chip">Cash to reconcile: {inr(todo.yCash)}</span>
+        </div>
+        <p className="xs muted" style={{ marginTop: 0 }}>Daily habit: match that cash figure against the drawer before service starts.</p>
+        {todo.bdays.length > 0 && <>
+          <h3 style={{ marginTop: 14 }}>Birthdays — next 7 days ({todo.bdays.length})</h3>
+          {todo.bdays.map(c => <div key={c.id} className="spread" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1', gap: 8 }}>
+            <span className="grow"><b>{c.name || 'Customer'}</b> {c.today && <span className="chip a">TODAY</span>} <span className="muted xs">{c._o.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span></span>
+            <span className="row">
+              <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/' + waNum(c.phone) + '?text=' + encodeURIComponent('Happy birthday, ' + (c.name || 'friend') + '! Come celebrate with us at ' + rest.name + ' — a little something is waiting for you.')}>Wish</a>
+              {mk && mk.birthday_paise > 0 && <button className="btn slim primary" onClick={() => creditBday(c)}>Credit {inr(mk.birthday_paise)}</button>}
+            </span>
+          </div>)}
+        </>}
+        {todo.annivs.length > 0 && <>
+          <h3 style={{ marginTop: 14 }}>Anniversaries — next 7 days ({todo.annivs.length})</h3>
+          {todo.annivs.map(c => <div key={c.id} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
+            <span><b>{c.name || 'Customer'}</b> <span className="muted xs">{c._o.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span></span>
+            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/' + waNum(c.phone) + '?text=' + encodeURIComponent('Happy anniversary, ' + (c.name || 'friend') + '! Celebrate with us at ' + rest.name + ' this week?')}>Wish</a>
+          </div>)}
+        </>}
+        {todo.bad.length > 0 && <>
+          <h3 style={{ marginTop: 14, color: '#B23A2E' }}>Low ratings to recover ({todo.bad.length})</h3>
+          {todo.bad.map(f => <div key={f.created_at + (f.order_id || '')} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
+            <span><b style={{ color: '#B23A2E' }}>{'★'.repeat(f.stars)}</b> <span className="muted">{f.customers?.name || 'Guest'}</span></span>
+            <span className="xs muted">{fmtDate(f.created_at)}</span>
+          </div>)}
+          <p className="xs muted">Reach out within 24 hours — a recovered unhappy guest becomes the most loyal one. Find their number under Customers.</p>
+        </>}
+        {todo.noFb.length > 0 && <>
+          <h3 style={{ marginTop: 14 }}>Feedback not yet asked ({todo.noFb.length})</h3>
+          {todo.noFb.map(o => <div key={o.id} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
+            <span><b>{o.customers?.name || 'Guest'}</b> <span className="muted num">{inr(o.total_paise)}</span> <span className="muted xs">{fmtDate(o.created_at)}</span></span>
+            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/?text=' + encodeURIComponent('Thank you for visiting ' + rest.name + '! How was everything today? Rate your visit: ' + window.location.origin + '/customer?slug=' + rest.slug + '&qr=' + (todo.cMap[o.customer_id]?.qr_code || '') + '&k=' + (todo.cMap[o.customer_id]?.qr_secret || '') + '&fb=' + o.id)}>Ask</a>
+          </div>)}
+        </>}
+        {todo.idle > 0 && <div className="spread" style={{ marginTop: 14 }}>
+          <span className="sm"><b>{todo.idle}</b> customer(s) haven't visited in 14+ days</span>
+          <button className="btn slim primary" onClick={() => { setCampSeg('idle14'); setTab('campaigns') }}>Start win-back</button>
+        </div>}
+        {todo.bdays.length === 0 && todo.annivs.length === 0 && todo.bad.length === 0 && todo.noFb.length === 0 && todo.idle === 0
+          && <p className="sm muted" style={{ marginTop: 10 }}>All clear — nothing needs your attention today.</p>}
+      </div>}
       <div className="card">
         <div className="spread">
           <h2>Performance</h2>
@@ -556,7 +641,7 @@ export default function Admin() {
     {tab === 'marketing' && <>
       <div className="card">
         <h2>Rewards & occasions</h2>
-        <p className="sm muted">Referral bonuses credit both wallets the moment staff enters the friend's code. Birthday credit is once per customer per year, given at the counter.</p>
+        <p className="sm muted">Referral bonuses credit both wallets the moment staff enters the friend's code. Birthday credit is once per customer per year, given at the counter or from the Today card.</p>
         <div className="row">
           <div className="grow"><label className="label">Referrer gets ₹</label><input className="input" type="number" value={mkF.referrer} onChange={e => setMkF({ ...mkF, referrer: e.target.value })} /></div>
           <div className="grow"><label className="label">New friend gets ₹</label><input className="input" type="number" value={mkF.referee} onChange={e => setMkF({ ...mkF, referee: e.target.value })} /></div>
@@ -572,7 +657,7 @@ export default function Admin() {
             <div className="xs muted">{c._b.getDate() + ' ' + c._b.toLocaleString('en', { month: 'long' })}{claims.has(c.id) ? ' · credit given this year' : ''}</div></span>
           <span className="row">
             {mk && mk.birthday_paise > 0 && !claims.has(c.id) && <button className="btn slim primary" onClick={() => claimBday(c)}>Credit {inr(mk.birthday_paise)}</button>}
-            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/' + (() => { let d = (c.phone || '').replace(/\D/g, ''); if (d.length === 10) d = '91' + d; return d })() + '?text=' + encodeURIComponent('Happy birthday, ' + (c.name || 'friend') + '! Come celebrate with us at ' + rest.name + ' — a little something is waiting for you.')}>Wish</a>
+            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/' + waNum(c.phone) + '?text=' + encodeURIComponent('Happy birthday, ' + (c.name || 'friend') + '! Come celebrate with us at ' + rest.name + ' — a little something is waiting for you.')}>Wish</a>
           </span>
         </div>)}
         <h3 style={{ marginTop: 14 }}>Anniversaries this month ({annivs.length})</h3>
@@ -584,7 +669,7 @@ export default function Admin() {
       </div>
       <div className="card">
         <div className="spread"><h3>Guest feedback</h3>{fbAvg && <span className="chip a">avg {fbAvg} / 5 ({fbList.length})</span>}</div>
-        {fbList.length === 0 && <p className="sm muted">No feedback yet — staff can request it after each bill in the Staff portal.</p>}
+        {fbList.length === 0 && <p className="sm muted">No feedback yet — staff can request it after each bill in the Staff portal; low ratings also surface on the Today card.</p>}
         {fbList.map(f => <div key={f.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
           <span><b className="num" style={{ color: '#8F6A12' }}>{'★'.repeat(f.stars)}{'☆'.repeat(5 - f.stars)}</b> <span className="muted">{f.customers?.name || ''}</span>{f.comment && <div className="xs muted">"{f.comment}"</div>}</span>
           <span className="muted xs">{fmtDate(f.created_at)}</span>
