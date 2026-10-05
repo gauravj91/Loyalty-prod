@@ -340,9 +340,11 @@ export default function Staff() {
     </>}
 
     {!cust && <div className="card">
-      <h3>New walk-in?</h3>
-      <p className="sm muted" style={{ margin: '6px 0 12px' }}>Add them first, then make their bill.</p>
-      <button className="btn" onClick={() => { setTab('addcust') }} disabled={!cust}>Add customer (select a customer tab above first)</button>
+      <h3>New customer? Add them here</h3>
+      <p className="sm muted" style={{ margin: '6px 0 12px' }}>Creates a loyalty customer and shows their QR + personal portal link.</p>
+      <input className="input" style={{ marginBottom: 8 }} placeholder="Name (optional)" value={nc.name} onChange={e => setNc({ ...nc, name: e.target.value })} />
+      <input className="input" style={{ marginBottom: 8 }} type="tel" placeholder="Phone" value={nc.phone} onChange={e => setNc({ ...nc, phone: e.target.value })} />
+      <button className="btn primary" disabled={busy} onClick={addCustomer}>{busy ? 'Creating…' : 'Create customer'}</button>
     </div>}
 
     {/* ---- success panel ---- */}
