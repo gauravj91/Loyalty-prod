@@ -8,10 +8,47 @@ const S = ({ title, children, open }) => (
   <details className="sec" open={open}><summary>{title}</summary><div style={{ paddingTop: 10 }}>{children}</div></details>
 )
 
+function Bars({ series }) {
+  const max = Math.max(1, ...series.map(s => s.revenue))
+  const step = series.length > 16 ? 5 : series.length > 8 ? 2 : 1
+  return <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 130, marginTop: 12 }}>
+    {series.map((s, i) => <div key={s.key} style={{ flex: 1, textAlign: 'center' }} title={inr(s.revenue) + ' · ' + s.bills + ' bills'}>
+      <div style={{ height: Math.max(3, Math.round(s.revenue / max * 100)), background: 'linear-gradient(180deg,#C2511F,#E07A4A)', borderRadius: 4, transition: 'height .3s' }} />
+      <div className="xs muted" style={{ marginTop: 4, visibility: (i % step === 0 || i === series.length - 1) ? 'visible' : 'hidden' }}>{s.label}</div>
+    </div>)}
+  </div>
+}
+
+function HBars({ items }) {
+  const max = Math.max(1, ...items.map(i => i.value))
+  return <div style={{ marginTop: 10 }}>
+    {items.map(i => <div key={i.label} style={{ marginBottom: 8 }}>
+      <div className="spread sm"><span>{i.label}</span><b className="num">{inr(i.value)}</b></div>
+      <div className="bar"><div style={{ width: (i.value / max * 100) + '%', background: '#3D5A66' }} /></div>
+    </div>)}
+  </div>
+}
+
+function OutletTable({ rows }) {
+  if (!rows.length) return <p className="sm muted">No outlet activity in this period.</p>
+  return <table className="t"><thead><tr><th>Outlet</th><th>Sales</th><th>Bills</th><th>Avg bill</th><th>Wallet</th><th>Counter</th><th>Top-ups</th></tr></thead><tbody>
+    {rows.map(r => <tr key={r.name}>
+      <td><b>{r.name}</b></td>
+      <td className="num">{inr(r.sales)}</td>
+      <td className="num">{r.bills}</td>
+      <td className="num">{inr(r.bills ? Math.round(r.sales / r.bills) : 0)}</td>
+      <td className="num">{inr(r.wallet)}</td>
+      <td className="num">{inr(r.counter)}</td>
+      <td className="num">{inr(r.topups)}</td>
+    </tr>)}
+  </tbody></table>
+}
+
 export default function Admin() {
   const [err, setErr] = useState(''); const [msg, setMsg] = useState(''); const [loadErr, setLoadErr] = useState('')
   const [rest, setRest] = useState(null); const [tab, setTab] = useState('overview')
   const [range, setRange] = useState(6); const [stats, setStats] = useState(null); const [ordersRaw, setOrdersRaw] = useState([]); const [wtxRaw, setWtxRaw] = useState([])
+  const [outletNames, setOutletNames] = useState({})
   const [ws, setWs] = useState(null); const [wsF, setWsF] = useState({ name: 'Wallet offer', min: '500', bonus: '10', cap: '' })
   const [rules, setRules] = useState([]); const [ruleF, setRuleF] = useState({ name: '', target_type: 'item', target_value: '', required_count: '10', reward_type: 'free_item', reward_value: '1', reward_label: '' })
   const [pc, setPc] = useState(null); const [pcF, setPcF] = useState({ per100: '1', active: true, b0: '0', b1: '500', b2: '1000', b3: '2500' })
@@ -22,6 +59,7 @@ export default function Admin() {
   const [outs, setOuts] = useState([]); const [outF, setOutF] = useState({ name: '', address: '', phone: '' })
   const [campSeg, setCampSeg] = useState('all'); const [campPts, setCampPts] = useState(100)
   const [campMsg, setCampMsg] = useState('Hi {name}! We miss you — visit us this week and treat yourself.'); const [campList, setCampList] = useState(null)
+  const [campIdx, setCampIdx] = useState(0); const [sentIds, setSentIds] = useState([])
 
   useEffect(() => { (async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -41,12 +79,16 @@ export default function Admin() {
 
   async function loadStats() {
     const from = dayStart(range)
-    const [o, w, cb] = await Promise.all([
+    const [o, w, cb, ol] = await Promise.all([
       supabase.from('orders').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false }),
       supabase.from('wallet_transactions').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false }),
-      supabase.from('customers').select('wallet_balance_paise').eq('restaurant_id', rest.id),
+      supabase.from('customers').select('id, wallet_balance_paise, created_at').eq('restaurant_id', rest.id),
+      supabase.from('outlets').select('id, name').eq('restaurant_id', rest.id),
     ])
-    const ords = o.data || []; const wtx = w.data || []
+    const ords = o.data || []; const wtx = w.data || []; const custRows = cb.data || []
+    const oName = {}; (ol.data || []).forEach(x => oName[x.id] = x.name)
+    setOutletNames(oName)
+
     const byMethod = {}
     ords.forEach(x => { byMethod[x.payment_method] = (byMethod[x.payment_method] || 0) + x.other_paid_paise })
     const itemAgg = {}
@@ -55,10 +97,30 @@ export default function Admin() {
       itemAgg[it.name].qty += it.qty; itemAgg[it.name].amt += it.qty * it.unit_price_paise
     }))
     const tops = wtx.filter(x => x.type === 'topup')
+
+    const byOutlet = {}
+    const ensure = k => { if (!byOutlet[k]) byOutlet[k] = { name: oName[k] || 'Unassigned', sales: 0, bills: 0, wallet: 0, counter: 0, topups: 0, custSet: new Set() }; return byOutlet[k] }
+    ords.forEach(x => { const r = ensure(x.outlet_id || 'none'); r.sales += x.total_paise; r.bills++; r.wallet += x.wallet_paid_paise; r.counter += x.other_paid_paise; if (x.customer_id) r.custSet.add(x.customer_id) })
+    tops.forEach(x => { const r = ensure(x.outlet_id || 'none'); r.topups += x.amount_paise + (x.bonus_paise || 0) })
+
+    const days = range === 0 ? 1 : range + 1
+    const dkey = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+    const series = []
+    for (let i = days - 1; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); series.push({ key: dkey(d), label: d.getDate() + '', revenue: 0, bills: 0 }) }
+    const dayMap = {}; series.forEach(s => dayMap[s.key] = s)
+    ords.forEach(x => { const s = dayMap[dkey(new Date(x.created_at))]; if (s) { s.revenue += x.total_paise; s.bills++ } })
+
+    const fromMs = new Date(from).getTime()
+    const custMeta = {}; custRows.forEach(c => custMeta[c.id] = c)
+    const active = new Set(ords.map(x => x.customer_id).filter(Boolean))
+    const newC = custRows.filter(c => new Date(c.created_at).getTime() >= fromMs).length
+    const retC = [...active].filter(id => custMeta[id] && new Date(custMeta[id].created_at).getTime() < fromMs).length
+
+    const revenue = ords.reduce((s, x) => s + x.total_paise, 0)
+    const bills = ords.length
     setStats({
-      revenue: ords.reduce((s, x) => s + x.total_paise, 0),
-      bills: ords.length,
-      customers: new Set(ords.map(x => x.customer_id).filter(Boolean)).size,
+      revenue, bills, bills,
+      customers: active.size,
       walletSales: ords.reduce((s, x) => s + x.wallet_paid_paise, 0),
       byMethod, itemAgg,
       topups: tops.reduce((s, x) => s + x.amount_paise + x.bonus_paise, 0),
@@ -66,7 +128,11 @@ export default function Admin() {
       bonusGiven: tops.reduce((s, x) => s + (x.bonus_paise || 0), 0),
       points: ords.reduce((s, x) => s + x.points_earned, 0),
       cashHandover: (byMethod['cash'] || 0) + tops.filter(x => x.payment_method === 'cash').reduce((s, x) => s + x.amount_paise, 0),
-      walletLiability: (cb.data || []).reduce((s, x) => s + x.wallet_balance_paise, 0),
+      walletLiability: custRows.reduce((s, x) => s + x.wallet_balance_paise, 0),
+      series,
+      newC, retC,
+      avgBill: bills ? Math.round(revenue / bills) : 0,
+      outlets: Object.values(byOutlet).map(v => ({ ...v, customers: v.custSet.size })).sort((a, b) => b.sales - a.sales),
     })
     setOrdersRaw(ords); setWtxRaw(wtx)
   }
@@ -185,7 +251,11 @@ export default function Admin() {
       if (campSeg === 'points') return c.points_balance >= campPts
       return true
     })
-    setCampList(rows)
+    setCampList(rows); setCampIdx(0)
+    try {
+      const s = JSON.parse(localStorage.getItem('tessera_camp_' + rest.slug + '_' + campSeg) || 'null')
+      setSentIds(s && s.date === new Date().toDateString() ? s.ids : [])
+    } catch (e) { setSentIds([]) }
   }
   function campText(c) {
     return campMsg.replaceAll('{name}', c.name || 'friend').replaceAll('{wallet}', inr(c.wallet_balance_paise)).replaceAll('{points}', String(c.points_balance))
@@ -195,11 +265,28 @@ export default function Admin() {
     if (d.length === 10) d = '91' + d
     return 'https://wa.me/' + d + '?text=' + encodeURIComponent(campText(c))
   }
+  function sentKey() { return 'tessera_camp_' + rest.slug + '_' + campSeg }
+  function openNext(skip) {
+    if (!campList || campIdx >= campList.length) return
+    const c = campList[campIdx]
+    if (!skip) {
+      window.open(waLink(c), '_blank')
+      const ids = [...sentIds, c.id]; setSentIds(ids)
+      try { localStorage.setItem(sentKey(), JSON.stringify({ date: new Date().toDateString(), ids })) } catch (e) {}
+    }
+    setCampIdx(i => i + 1)
+  }
+  function copyNumbers() {
+    if (!campList) return
+    const nums = campList.map(c => { let d = (c.phone || '').replace(/\D/g, ''); if (d.length === 10) d = '91' + d; return d }).join(', ')
+    navigator.clipboard?.writeText(nums)
+    flash('All phone numbers copied — paste them while creating a WhatsApp broadcast list.')
+  }
 
   const ledgerRows = [
-    ...ordersRaw.map(o => ({ at: o.created_at, what: 'Bill — ' + o.payment_method, cash: o.other_paid_paise, wallet: o.wallet_paid_paise, credit: 0, by: o.created_by_name })),
-    ...wtxRaw.filter(x => x.type === 'topup').map(x => ({ at: x.created_at, what: 'Wallet top-up (' + (x.payment_method || 'cash') + ')', cash: x.amount_paise, wallet: 0, credit: x.bonus_paise || 0, by: x.created_by_name })),
-    ...wtxRaw.filter(x => x.type === 'adjustment').map(x => ({ at: x.created_at, what: 'Adjustment — ' + (x.note || 'manual'), cash: 0, wallet: 0, credit: x.amount_paise, by: x.created_by_name })),
+    ...ordersRaw.map(o => ({ at: o.created_at, what: 'Bill — ' + o.payment_method, out: outletNames[o.outlet_id] || '—', cash: o.other_paid_paise, wallet: o.wallet_paid_paise, credit: 0, by: o.created_by_name })),
+    ...wtxRaw.filter(x => x.type === 'topup').map(x => ({ at: x.created_at, what: 'Wallet top-up (' + (x.payment_method || 'cash') + ')', out: outletNames[x.outlet_id] || '—', cash: x.amount_paise, wallet: 0, credit: x.bonus_paise || 0, by: x.created_by_name })),
+    ...wtxRaw.filter(x => x.type === 'adjustment').map(x => ({ at: x.created_at, what: 'Adjustment — ' + (x.note || 'manual'), out: outletNames[x.outlet_id] || '—', cash: 0, wallet: 0, credit: x.amount_paise, by: x.created_by_name })),
   ].sort((a, b) => new Date(b.at) - new Date(a.at))
 
   if (loadErr) return <div className="wrap"><div className="err sm">{loadErr}</div><div style={{ height: 10 }} /><button className="btn" onClick={() => window.location.reload()}>Retry</button></div>
@@ -230,18 +317,39 @@ export default function Admin() {
           </select>
         </div>
         {stats && <>
-          <div className="row" style={{ marginTop: 8 }}>
-            <div className="grow"><div className="xs muted">TOTAL SALES</div><div className="big num">{inr(stats.revenue)}</div></div>
-            <div className="grow"><div className="xs muted">BILLS</div><div className="big num">{stats.bills}</div></div>
-            <div className="grow"><div className="xs muted">CUSTOMERS</div><div className="big num">{stats.customers}</div></div>
+          <div className="row" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+            <div className="grow" style={{ minWidth: 120 }}><div className="xs muted">TOTAL SALES</div><div className="big num">{inr(stats.revenue)}</div></div>
+            <div className="grow" style={{ minWidth: 100 }}><div className="xs muted">BILLS</div><div className="big num">{stats.bills}</div></div>
+            <div className="grow" style={{ minWidth: 110 }}><div className="xs muted">AVG BILL</div><div className="big num">{inr(stats.avgBill)}</div></div>
+            <div className="grow" style={{ minWidth: 110 }}><div className="xs muted">CUSTOMERS</div><div className="big num">{stats.customers}</div></div>
           </div>
           <div className="row sm" style={{ marginTop: 10, flexWrap: 'wrap' }}>
             <span className="chip">Wallet sales {inr(stats.walletSales)}</span>
             <span className="chip">Top-ups {inr(stats.topups)}</span>
             <span className="chip">Bonus given {inr(stats.bonusGiven)}</span>
             <span className="chip">Points issued {stats.points}</span>
-            {Object.entries(stats.byMethod).map(([m, v]) => <span key={m} className="chip">{m} {inr(v)}</span>)}
           </div>
+
+          <h3 style={{ marginTop: 16 }}>Daily sales</h3>
+          <Bars series={stats.series} />
+
+          <h3 style={{ marginTop: 16 }}>Payment mix</h3>
+          <HBars items={[
+            ...Object.entries(stats.byMethod).map(([m, v]) => ({ label: m[0].toUpperCase() + m.slice(1), value: v })),
+            { label: 'Wallet', value: stats.walletSales },
+          ].filter(i => i.value > 0)} />
+
+          <div className="row" style={{ marginTop: 14 }}>
+            <div className="grow"><div className="xs muted">NEW CUSTOMERS</div><div className="num" style={{ fontSize: 22, fontWeight: 800 }}>{stats.newC}</div></div>
+            <div className="grow"><div className="xs muted">RETURNING</div><div className="num" style={{ fontSize: 22, fontWeight: 800 }}>{stats.retC}</div></div>
+            <div className="grow"><div className="xs muted">REPEAT RATE</div><div className="num" style={{ fontSize: 22, fontWeight: 800 }}>{stats.customers ? Math.round(stats.retC / stats.customers * 100) + '%' : '—'}</div></div>
+          </div>
+
+          {stats.outlets.length > 0 && <>
+            <h3 style={{ marginTop: 16 }}>By outlet</h3>
+            <OutletTable rows={stats.outlets} />
+          </>}
+
           {Object.keys(stats.itemAgg).length > 0 && <>
             <h3 style={{ marginTop: 16 }}>Top items</h3>
             <table className="t"><thead><tr><th>Item</th><th>Qty</th><th>Sales</th></tr></thead><tbody>
@@ -252,7 +360,7 @@ export default function Admin() {
           <div style={{ height: 12 }} />
           <button className="btn" onClick={() => downloadCsv(`orders-${rest.slug}.csv`, [
             ['Date', 'Outlet', 'Total ₹', 'Wallet ₹', 'Other ₹', 'Method', 'Points'],
-            ...ordersRaw.map(o => [fmtDate(o.created_at), o.outlet_id, o.total_paise / 100, o.wallet_paid_paise / 100, o.other_paid_paise / 100, o.payment_method, o.points_earned]),
+            ...ordersRaw.map(o => [fmtDate(o.created_at), outletNames[o.outlet_id] || o.outlet_id, o.total_paise / 100, o.wallet_paid_paise / 100, o.other_paid_paise / 100, o.payment_method, o.points_earned]),
           ])}>Export orders CSV</button>
         </>}
       </div>
@@ -281,16 +389,18 @@ export default function Admin() {
           <p className="xs muted" style={{ marginTop: 10 }}>
             "Indicative" is not true profit — food costs are not tracked here. Bonus credits are the direct marketing cost of the wallet offer, and wallet liability is money customers can still spend. Export the ledger below for your accountant.
           </p>
+          <h3 style={{ marginTop: 16 }}>By outlet</h3>
+          <OutletTable rows={stats.outlets} />
         </>}
       </div>
       <div className="card">
         <div className="spread"><h3>Ledger</h3><button className="btn slim" onClick={() => downloadCsv(`ledger-${rest.slug}.csv`, [
-          ['Date', 'Detail', 'By', 'Counter collected', 'Wallet', 'Credit/bonus out'],
-          ...ledgerRows.map(r => [fmtDate(r.at), r.what, r.by || '', r.cash / 100, r.wallet / 100, r.credit / 100]),
+          ['Date', 'Outlet', 'Detail', 'By', 'Counter collected', 'Wallet', 'Credit/bonus out'],
+          ...ledgerRows.map(r => [fmtDate(r.at), r.out, r.what, r.by || '', r.cash / 100, r.wallet / 100, r.credit / 100]),
         ])}>Export CSV</button></div>
-        <table className="t"><thead><tr><th>Date</th><th>Detail</th><th>By</th><th>Counter</th><th>Wallet</th><th>Credit out</th></tr></thead><tbody>
+        <table className="t"><thead><tr><th>Date</th><th>Outlet</th><th>Detail</th><th>By</th><th>Counter</th><th>Wallet</th><th>Credit out</th></tr></thead><tbody>
           {ledgerRows.slice(0, 100).map((r, i) => <tr key={i}>
-            <td className="xs">{fmtDate(r.at)}</td><td className="sm">{r.what}</td><td className="xs">{r.by || '—'}</td>
+            <td className="xs">{fmtDate(r.at)}</td><td className="xs">{r.out}</td><td className="sm">{r.what}</td><td className="xs">{r.by || '—'}</td>
             <td className="num">{r.cash ? inr(r.cash) : ''}</td>
             <td className="num">{r.wallet ? inr(r.wallet) : ''}</td>
             <td className="num">{r.credit ? inr(r.credit) : ''}</td>
@@ -302,7 +412,7 @@ export default function Admin() {
 
     {tab === 'campaigns' && <div className="card">
       <h2>Campaigns — bring customers back</h2>
-      <p className="sm muted">Pick a segment, write one message, and send it from your own WhatsApp with each customer's name, wallet and points filled in — free. Export the CSV to use with any bulk tool later.</p>
+      <p className="sm muted">Pick a segment, write one message with placeholders {'{name}'} {'{wallet}'} {'{points}'}, then send. Assisted mode opens each customer's WhatsApp with the message pre-filled and tracks your progress — no retyping.</p>
       <div className="row">
         <select className="select" style={{ width: 210 }} value={campSeg} onChange={e => setCampSeg(e.target.value)}>
           <option value="all">All customers</option>
@@ -313,13 +423,28 @@ export default function Admin() {
         </select>
         {campSeg === 'points' && <input className="input" style={{ width: 110 }} type="number" value={campPts} onChange={e => setCampPts(parseInt(e.target.value || 0))} />}
       </div>
-      <label className="label">Message — placeholders: {'{name}'} {'{wallet}'} {'{points}'}</label>
+      <label className="label">Message</label>
       <textarea className="input" rows={3} value={campMsg} onChange={e => setCampMsg(e.target.value)} />
       {campList && <>
-        <p className="sm" style={{ marginTop: 10 }}><b>{campList.length}</b> customer(s) in this segment. Tap <b>Send</b> on a row — WhatsApp opens with the message pre-filled; press send there.</p>
+        <p className="sm" style={{ marginTop: 10 }}><b>{campList.length}</b> in this segment · <b>{sentIds.length}</b> opened today</p>
+        {campList.length > 0 && <div className="card" style={{ background: '#F8F4EC', marginBottom: 12 }}>
+          <h3>Assisted sending {campIdx < campList.length ? `— next: ${campList[campIdx].name || campList[campIdx].phone} (${campIdx + 1}/${campList.length})` : '— done'}</h3>
+          <div className="bar" style={{ margin: '8px 0' }}><div style={{ width: (sentIds.length / campList.length * 100) + '%' }} /></div>
+          <div className="row">
+            <button className="btn primary slim grow" disabled={campIdx >= campList.length} onClick={() => openNext(false)}>Open in WhatsApp</button>
+            <button className="btn slim" disabled={campIdx >= campList.length} onClick={() => openNext(true)}>Skip</button>
+            <button className="btn slim" onClick={() => { setCampIdx(0); setSentIds([]); try { localStorage.removeItem(sentKey()) } catch (e) {} }}>Reset</button>
+          </div>
+          <div style={{ height: 8 }} />
+          <button className="btn slim" onClick={copyNumbers}>Copy all phone numbers</button>
+          <p className="xs muted" style={{ marginTop: 8 }}>
+            Tip: WhatsApp bans numbers that blast identical messages — keep it under ~25 per day from one number, and the personalization above helps. Broadcast lists need recipients to have your number saved; direct opens below do not.
+          </p>
+        </div>}
         {campList.map(c => <div key={c.id} className="spread" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', gap: 10 }}>
           <span className="grow">
             <b>{c.name || 'Customer'}</b> <span className="muted num sm">{c.phone}</span>
+            {sentIds.includes(c.id) && <span className="chip g" style={{ marginLeft: 6 }}>opened</span>}
             <div className="xs muted">{campText(c)}</div>
           </span>
           <a className="btn slim primary" href={waLink(c)} target="_blank" rel="noreferrer">Send</a>
