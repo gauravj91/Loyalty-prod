@@ -162,7 +162,33 @@ export default function Admin() {
     const { data } = await supabase.from('outlets').select('*').eq('restaurant_id', rest.id)
     setOuts(data || [])
   }
-
+  async function delScheme() {
+    if (!ws) return
+    if (!confirm('Delete the wallet scheme? New top-ups will earn no bonus until you save a new one.')) return
+    const { error } = await supabase.from('wallet_schemes').delete().eq('id', ws.id)
+    error ? setErr(errMsg(error)) : flash('Wallet scheme deleted'); setWs(null); setWsF({ name: 'Wallet offer', min: '500', bonus: '10', cap: '' }); loadOffers()
+  }
+  async function delRule(r) {
+    const [st, pr] = await Promise.all([
+      supabase.from('stamp_transactions').select('id', { count: 'exact', head: true }).eq('stamp_rule_id', r.id),
+      supabase.from('customer_stamp_progress').select('customer_id', { count: 'exact', head: true }).eq('stamp_rule_id', r.id),
+    ])
+    if ((st.count || 0) > 0 || (pr.count || 0) > 0)
+      return setErr('In use — ' + (st.count || 0) + ' stamp events, ' + (pr.count || 0) + ' card(s) hold progress on it. Turn it Off instead to keep customer history intact.')
+    if (!confirm('Delete rule "' + r.name + '" permanently?')) return
+    const { error } = await supabase.from('stamp_rules').delete().eq('id', r.id)
+    error ? setErr(errMsg(error)) : flash('Stamp rule deleted')
+    loadOffers()
+  }
+  async function delReward(r) {
+    const { count } = await supabase.from('reward_redemptions').select('id', { count: 'exact', head: true }).eq('reward_id', r.id)
+    if ((count || 0) > 0)
+      return setErr('Redeemed ' + count + ' time(s) — turn it Off instead to keep history intact.')
+    if (!confirm('Delete reward "' + r.name + '" permanently?')) return
+    const { error } = await supabase.from('rewards').delete().eq('id', r.id)
+    error ? setErr(errMsg(error)) : flash('Reward deleted')
+    loadOffers()
+  }
   const flash = m => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 3000) }
 
   async function saveScheme() {
@@ -464,13 +490,21 @@ export default function Admin() {
           <div style={{ width: 110 }}><label className="label">Min top-up ₹</label><input className="input" type="number" value={wsF.min} onChange={e => setWsF({ ...wsF, min: e.target.value })} /></div></div>
         <div className="row"><div className="grow"><label className="label">Bonus %</label><input className="input" type="number" value={wsF.bonus} onChange={e => setWsF({ ...wsF, bonus: e.target.value })} /></div>
           <div className="grow"><label className="label">Bonus cap ₹ (blank = none)</label><input className="input" type="number" value={wsF.cap} onChange={e => setWsF({ ...wsF, cap: e.target.value })} /></div></div>
-        <div style={{ height: 12 }} /><button className="btn primary" onClick={saveScheme}>Save wallet scheme</button>
-      </S>
+        <div className="row" style={{ marginTop: 12 }}>
+          <button className="btn primary grow" onClick={saveScheme}>Save wallet scheme</button>
+          {ws && <button className="btn danger" style={{ width: 'auto' }} onClick={delScheme}>Delete</button>}
+        </div>      </S>
       <S title={`Stamp rules (${rules.length})`} open>
         {rules.map(r => <div key={r.id} className="spread sm" style={{ padding: '6px 0' }}>
           <span><b>{r.name}</b> — {r.target_value} ×{r.required_count} → {r.reward_type === 'free_item' ? r.reward_label : (r.reward_type === 'percent_discount' ? r.reward_value + '% off' : inr(r.reward_value) + ' off')}</span>
-          <button className={'chip ' + (r.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={() => toggle('stamp_rules', r.id, r.active)}>{r.active ? 'Active' : 'Off'}</button>
-        </div>)}
+          <span className="row">
+          <span className="row">
+            <button className={'chip ' + (r.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={() => toggle('rewards', r.id, r.active)}>{r.active ? 'Active' : 'Off'}</button>
+            <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delReward(r)}>Del</button>
+          </span>
+        </div>)}            <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delRule(r)}>Del</button>
+          </span>
+        </div>)}        </div>)}
         <div className="row"><input className="input grow" placeholder="Rule name e.g. Coffee card" value={ruleF.name} onChange={e => setRuleF({ ...ruleF, name: e.target.value })} />
           <select className="select" style={{ width: 120 }} value={ruleF.target_type} onChange={e => setRuleF({ ...ruleF, target_type: e.target.value })}><option value="item">Item</option><option value="category">Category</option></select>
           <input className="input" style={{ width: 110 }} placeholder="Target" value={ruleF.target_value} onChange={e => setRuleF({ ...ruleF, target_value: e.target.value })} /></div>
