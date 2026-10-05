@@ -18,8 +18,7 @@ export default function CustomerPortal() {
   const [invite, setInvite] = useState(null)
   const [fbFor, setFbFor] = useState(null); const [fbStars, setFbStars] = useState(0)
   const [fbComment, setFbComment] = useState(''); const [fbDone, setFbDone] = useState(false)
-  const [copied, setCopied] = useState(false)
-
+  const [copied, setCopied] = useState(false); const [slug, setSlug] = useState('')
   useEffect(() => { boot() }, [])
 
   async function boot() {
@@ -38,7 +37,7 @@ export default function CustomerPortal() {
       const { data: cid, error } = await supabase.rpc('customer_sign_in', { p_slug: slug, p_qr_code: qr, p_secret: secret })
       if (error) throw error
       localStorage.setItem(LS, JSON.stringify({ slug, qr, secret }))
-      await load(cid)
+      setSlug(slug || '')      await load(cid)
       if (fb) setFbFor(fb)
     } catch (e) { setErr(errMsg(e)); setStatus('need_link') }
   }
@@ -111,10 +110,10 @@ export default function CustomerPortal() {
     ...orders.map(o => ({ at: o.created_at, kind: 'order', o })),
     ...txns.filter(x => x.type === 'topup' || x.type === 'adjustment').map(x => ({ at: x.created_at, kind: 'wallet', x })),
   ].sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 10)
-  const shareTxt = 'Eat at ' + (cust.restaurants?.name || 'our restaurant') + '!' +
-    (mk && mk.referrer_paise > 0
-      ? ' Use my code ' + cust.referral_code + ' when you join their loyalty program — we both get ' + inr(mk.referrer_paise) + ' in wallet credit.'
-      : ' Ask for my code ' + cust.referral_code + ' when you join their loyalty program.')
+  const inviteLink = (typeof window !== 'undefined' ? window.location.origin : '') + '/customer?slug=' + slug + '&ref=' + cust.referral_code
+  const shareTxt = (mk && mk.referrer_paise > 0
+    ? 'Join ' + (cust.restaurants?.name || 'this restaurant') + ' with my code ' + cust.referral_code + ' — we both get ' + inr(mk.referrer_paise) + ' in wallet credit. Open this link and show the code at the counter: ' + inviteLink
+    : 'Join ' + (cust.restaurants?.name || 'this restaurant') + ' with my code ' + cust.referral_code + '. Open this link and show the code at the counter: ' + inviteLink)
 
   return <div className="wrap">
     <div className="spread" style={{ marginBottom: 16 }}>
