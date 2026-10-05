@@ -37,7 +37,8 @@ export default function CustomerPortal() {
       const { data: cid, error } = await supabase.rpc('customer_sign_in', { p_slug: slug, p_qr_code: qr, p_secret: secret })
       if (error) throw error
       localStorage.setItem(LS, JSON.stringify({ slug, qr, secret }))
-      setSlug(slug || '')      await load(cid)
+      setSlug(slug || '')
+      await load(cid)      
       if (fb) setFbFor(fb)
     } catch (e) { setErr(errMsg(e)); setStatus('need_link') }
   }
