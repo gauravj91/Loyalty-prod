@@ -22,6 +22,7 @@ export default function Admin() {
   const [outs, setOuts] = useState([]); const [outF, setOutF] = useState({ name: '', address: '', phone: '' })
   const [campSeg, setCampSeg] = useState('all'); const [campPts, setCampPts] = useState(100)
   const [campMsg, setCampMsg] = useState('Hi {name}! We miss you — visit us this week and treat yourself.'); const [campList, setCampList] = useState(null)
+
   useEffect(() => { (async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { window.location.href = '/login'; return }
@@ -37,6 +38,7 @@ export default function Admin() {
   useEffect(() => { if (rest && tab === 'overview') loadStats() }, [rest, tab, range])
   useEffect(() => { if (rest && tab === 'customers') searchCusts('') }, [rest, tab])
   useEffect(() => { if (rest && tab === 'campaigns') buildCampaign() }, [rest, tab, campSeg, campPts])
+
   async function loadStats() {
     const from = dayStart(range)
     const [o, w, cb] = await Promise.all([
@@ -167,6 +169,7 @@ export default function Admin() {
     const { error } = await supabase.from('outlets').insert({ restaurant_id: rest.id, ...outF })
     error ? setErr(errMsg(error)) : flash('Outlet added'); setOutF({ name: '', address: '', phone: '' }); loadOutlets()
   }
+
   async function buildCampaign() {
     const [cs, ords] = await Promise.all([
       supabase.from('customers').select('*').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(200),
@@ -193,7 +196,7 @@ export default function Admin() {
     return 'https://wa.me/' + d + '?text=' + encodeURIComponent(campText(c))
   }
 
-    const ledgerRows = [
+  const ledgerRows = [
     ...ordersRaw.map(o => ({ at: o.created_at, what: 'Bill — ' + o.payment_method, cash: o.other_paid_paise, wallet: o.wallet_paid_paise, credit: 0, by: o.created_by_name })),
     ...wtxRaw.filter(x => x.type === 'topup').map(x => ({ at: x.created_at, what: 'Wallet top-up (' + (x.payment_method || 'cash') + ')', cash: x.amount_paise, wallet: 0, credit: x.bonus_paise || 0, by: x.created_by_name })),
     ...wtxRaw.filter(x => x.type === 'adjustment').map(x => ({ at: x.created_at, what: 'Adjustment — ' + (x.note || 'manual'), cash: 0, wallet: 0, credit: x.amount_paise, by: x.created_by_name })),
@@ -280,7 +283,7 @@ export default function Admin() {
           </p>
         </>}
       </div>
-            <div className="card">
+      <div className="card">
         <div className="spread"><h3>Ledger</h3><button className="btn slim" onClick={() => downloadCsv(`ledger-${rest.slug}.csv`, [
           ['Date', 'Detail', 'By', 'Counter collected', 'Wallet', 'Credit/bonus out'],
           ...ledgerRows.map(r => [fmtDate(r.at), r.what, r.by || '', r.cash / 100, r.wallet / 100, r.credit / 100]),
@@ -295,6 +298,8 @@ export default function Admin() {
         </tbody></table>
         {ledgerRows.length === 0 && <p className="sm muted">No entries in this period.</p>}
       </div>
+    </>}
+
     {tab === 'campaigns' && <div className="card">
       <h2>Campaigns — bring customers back</h2>
       <p className="sm muted">Pick a segment, write one message, and send it from your own WhatsApp with each customer's name, wallet and points filled in — free. Export the CSV to use with any bulk tool later.</p>
@@ -406,7 +411,8 @@ export default function Admin() {
           </div>
           {sel.prog.map(p => <div key={p.stamp_rule_id} className="sm">{p.stamp_rules.name}: <b className="num">{p.stamps_earned}</b> stamps, {(p.rewards_redeemed || 0)} redeemed</div>)}
           <h3 style={{ marginTop: 12 }}>Recent bills</h3>
-          {sel.orders.map(o => <div key={o.id} className="spread sm" style={{ padding: '4px 0' }}><span className="muted">{fmtDate(o.created_at)}{o.created_by_name ? ' · ' + o.created_by_name : ''}</span><b className="num">{inr(o.total_paise)}</b></div>)}          <h3 style={{ marginTop: 14 }}>Adjust wallet (audited)</h3>
+          {sel.orders.map(o => <div key={o.id} className="spread sm" style={{ padding: '4px 0' }}><span className="muted">{fmtDate(o.created_at)}{o.created_by_name ? ' · ' + o.created_by_name : ''}</span><b className="num">{inr(o.total_paise)}</b></div>)}
+          <h3 style={{ marginTop: 14 }}>Adjust wallet (audited)</h3>
           <div className="row"><input className="input grow" type="number" step="0.01" placeholder="Amount ₹ (+/-)" value={adjF.amount} onChange={e => setAdjF({ ...adjF, amount: e.target.value })} /></div>
           <input className="input" style={{ marginTop: 8 }} placeholder="Reason (required)" value={adjF.reason} onChange={e => setAdjF({ ...adjF, reason: e.target.value })} />
           <div style={{ height: 10 }} />
