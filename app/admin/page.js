@@ -615,7 +615,7 @@ export default function Admin() {
     </>}
 
     {tab === 'menu' && <div className="card">
-      <h2>Menu</h2>
+      <div className="spread"><h2>Menu</h2><a className="btn slim" href="/admin/import">Import from PDF</a></div> 
       <p className="sm muted">One-tap billing for staff. Cost price (optional) unlocks true gross margin in Books — staff never see costs.</p>
       <div className="row"><input className="input grow" placeholder="Item name" value={miF.name} onChange={e => setMiF({ ...miF, name: e.target.value })} />
         <input className="input" style={{ width: 110 }} placeholder="Category" value={miF.category} onChange={e => setMiF({ ...miF, category: e.target.value })} /></div>
