@@ -20,7 +20,8 @@ export default function Admin() {
   const [q, setQ] = useState(''); const [custs, setCusts] = useState([]); const [sel, setSel] = useState(null)
   const [adjF, setAdjF] = useState({ amount: '', reason: '' }); const [link, setLink] = useState(null)
   const [outs, setOuts] = useState([]); const [outF, setOutF] = useState({ name: '', address: '', phone: '' })
-
+  const [campSeg, setCampSeg] = useState('all'); const [campPts, setCampPts] = useState(100)
+  const [campMsg, setCampMsg] = useState('Hi {name}! We miss you — visit us this week and treat yourself.'); const [campList, setCampList] = useState(null)
   useEffect(() => { (async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { window.location.href = '/login'; return }
@@ -35,7 +36,7 @@ export default function Admin() {
   useEffect(() => { if (!rest) return; loadOffers(); loadStaff(); loadOutlets() }, [rest])
   useEffect(() => { if (rest && tab === 'overview') loadStats() }, [rest, tab, range])
   useEffect(() => { if (rest && tab === 'customers') searchCusts('') }, [rest, tab])
-
+  useEffect(() => { if (rest && tab === 'campaigns') buildCampaign() }, [rest, tab, campSeg, campPts])
   async function loadStats() {
     const from = dayStart(range)
     const [o, w, cb] = await Promise.all([
@@ -166,6 +167,31 @@ export default function Admin() {
     const { error } = await supabase.from('outlets').insert({ restaurant_id: rest.id, ...outF })
     error ? setErr(errMsg(error)) : flash('Outlet added'); setOutF({ name: '', address: '', phone: '' }); loadOutlets()
   }
+  async function buildCampaign() {
+    const [cs, ords] = await Promise.all([
+      supabase.from('customers').select('*').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(200),
+      supabase.from('orders').select('customer_id, created_at').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(1000),
+    ])
+    const lastVisit = {}
+    ;(ords.data || []).forEach(o => { if (o.customer_id && !lastVisit[o.customer_id]) lastVisit[o.customer_id] = o.created_at })
+    const now = Date.now()
+    const rows = (cs.data || []).filter(c => {
+      if (campSeg === 'wallet') return c.wallet_balance_paise > 0
+      if (campSeg === 'idle14') { const lv = lastVisit[c.id]; return !lv || (now - new Date(lv).getTime()) > 14 * 86400000 }
+      if (campSeg === 'idle30') { const lv = lastVisit[c.id]; return !lv || (now - new Date(lv).getTime()) > 30 * 86400000 }
+      if (campSeg === 'points') return c.points_balance >= campPts
+      return true
+    })
+    setCampList(rows)
+  }
+  function campText(c) {
+    return campMsg.replaceAll('{name}', c.name || 'friend').replaceAll('{wallet}', inr(c.wallet_balance_paise)).replaceAll('{points}', String(c.points_balance))
+  }
+  function waLink(c) {
+    let d = (c.phone || '').replace(/\D/g, '')
+    if (d.length === 10) d = '91' + d
+    return 'https://wa.me/' + d + '?text=' + encodeURIComponent(campText(c))
+  }
 
     const ledgerRows = [
     ...ordersRaw.map(o => ({ at: o.created_at, what: 'Bill — ' + o.payment_method, cash: o.other_paid_paise, wallet: o.wallet_paid_paise, credit: 0, by: o.created_by_name })),
@@ -188,7 +214,7 @@ export default function Admin() {
     {err && <div className="err sm">{err}</div>}
 
     <div className="tabs">
-      {['overview', 'books', 'offers', 'staff', 'customers', 'outlets'].map(t =>
+      {['overview', 'books', 'campaigns', 'offers', 'staff', 'customers', 'outlets'].map(t =>
         <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}
     </div>
 
@@ -269,6 +295,38 @@ export default function Admin() {
         </tbody></table>
         {ledgerRows.length === 0 && <p className="sm muted">No entries in this period.</p>}
       </div>
+    {tab === 'campaigns' && <div className="card">
+      <h2>Campaigns — bring customers back</h2>
+      <p className="sm muted">Pick a segment, write one message, and send it from your own WhatsApp with each customer's name, wallet and points filled in — free. Export the CSV to use with any bulk tool later.</p>
+      <div className="row">
+        <select className="select" style={{ width: 210 }} value={campSeg} onChange={e => setCampSeg(e.target.value)}>
+          <option value="all">All customers</option>
+          <option value="wallet">Has wallet balance</option>
+          <option value="idle14">No visit in 14+ days</option>
+          <option value="idle30">No visit in 30+ days</option>
+          <option value="points">Points earned</option>
+        </select>
+        {campSeg === 'points' && <input className="input" style={{ width: 110 }} type="number" value={campPts} onChange={e => setCampPts(parseInt(e.target.value || 0))} />}
+      </div>
+      <label className="label">Message — placeholders: {'{name}'} {'{wallet}'} {'{points}'}</label>
+      <textarea className="input" rows={3} value={campMsg} onChange={e => setCampMsg(e.target.value)} />
+      {campList && <>
+        <p className="sm" style={{ marginTop: 10 }}><b>{campList.length}</b> customer(s) in this segment. Tap <b>Send</b> on a row — WhatsApp opens with the message pre-filled; press send there.</p>
+        {campList.map(c => <div key={c.id} className="spread" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', gap: 10 }}>
+          <span className="grow">
+            <b>{c.name || 'Customer'}</b> <span className="muted num sm">{c.phone}</span>
+            <div className="xs muted">{campText(c)}</div>
+          </span>
+          <a className="btn slim primary" href={waLink(c)} target="_blank" rel="noreferrer">Send</a>
+        </div>)}
+        {campList.length === 0 && <p className="sm muted">No customers match this segment.</p>}
+        <div style={{ height: 10 }} />
+        <button className="btn" onClick={() => downloadCsv(`campaign-${campSeg}.csv`, [
+          ['Name', 'Phone', 'Message', 'WhatsApp link'],
+          ...campList.map(c => [c.name || '', c.phone, campText(c), waLink(c)]),
+        ])}>Export segment (CSV with links)</button>
+      </>}
+    </div>}
 
     {tab === 'offers' && <div className="card">
       <S title="Wallet scheme" open>
