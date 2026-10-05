@@ -9,7 +9,8 @@ export default function Staff() {
   const [err, setErr] = useState(''); const [busy, setBusy] = useState(false)
   const [rest, setRest] = useState(null); const [me, setMe] = useState(null)
   const [outlets, setOutlets] = useState([]); const [outletId, setOutletId] = useState('')
-  const [scheme, setScheme] = useState(null)
+  const [scheme, setScheme] = useState(null); const [mk, setMk] = useState(null)
+  const [menu, setMenu] = useState([])
   const [cust, setCust] = useState(null)
   const [prog, setProg] = useState([]); const [cfg, setCfg] = useState(null)
   const [rewards, setRewards] = useState([]); const [redCount, setRedCount] = useState({})
@@ -26,7 +27,7 @@ export default function Staff() {
   const [tab, setTab] = useState('bill')
   const [scanning, setScanning] = useState(false)
   const [phone, setPhone] = useState(''); const [manual, setManual] = useState('')
-  const [nc, setNc] = useState({ name: '', phone: '' })
+  const [nc, setNc] = useState({ name: '', phone: '', birth: '', anniv: '', ref: '' })
   const [link, setLink] = useState(null)
   const scannerRef = useRef(null); const idemRef = useRef(null)
 
@@ -37,14 +38,19 @@ export default function Staff() {
       .select('*, restaurants(name, slug)').eq('user_id', session.user.id).limit(1)
     if (!ru?.length) { setErr('This account is not linked to a restaurant.'); return setPhase('error') }
     setMe(ru[0]); setRest(ru[0].restaurants)
-    const [outs, sch, sr] = await Promise.all([
-      supabase.from('outlets').select('*').eq('restaurant_id', ru[0].restaurant_id).eq('status', 'active'),
-      supabase.from('wallet_schemes').select('*').eq('restaurant_id', ru[0].restaurant_id).eq('active', true).order('created_at', { ascending: false }).limit(1),
-      supabase.from('stamp_rules').select('*').eq('restaurant_id', ru[0].restaurant_id).eq('active', true).order('created_at'),
+    const rid = ru[0].restaurant_id
+    const [outs, sch, sr, mn, mkq] = await Promise.all([
+      supabase.from('outlets').select('*').eq('restaurant_id', rid).eq('status', 'active'),
+      supabase.from('wallet_schemes').select('*').eq('restaurant_id', rid).eq('active', true).order('created_at', { ascending: false }).limit(1),
+      supabase.from('stamp_rules').select('*').eq('restaurant_id', rid).eq('active', true).order('created_at'),
+      supabase.from('menu_items').select('*').eq('restaurant_id', rid).eq('active', true).order('category').order('name'),
+      supabase.from('marketing_config').select('*').eq('restaurant_id', rid).maybeSingle(),
     ])
     setOutlets(outs.data || []); if (outs.data?.length) setOutletId(outs.data[0].id)
     setScheme(sch.data?.[0] || null)
     setRules(sr.data || [])
+    setMenu(mn.data || [])
+    setMk(mkq.data || null)
     const savedId = (() => { try { return sessionStorage.getItem('tessera_staff_cust') } catch (e) { return null } })()
     if (savedId) {
       const { data: sc } = await supabase.from('customers').select('*').eq('id', savedId).maybeSingle()
@@ -113,13 +119,24 @@ export default function Staff() {
     setScanning(false)
   }
 
-  function addItem(preset) {
-    const name = preset?.name ?? f.name
-    const category = preset?.category ?? f.category
-    const price = preset ? preset.unit_price_paise : toPaise(f.price)
-    const qty = preset ? 1 : parseInt(f.qty || '1')
+  function addMenu(m) {
+    setItems(xs => {
+      const i = xs.findIndex(x => x.name === m.name && !x.free)
+      if (i >= 0) { const copy = [...xs]; copy[i] = { ...copy[i], qty: copy[i].qty + 1 }; return copy }
+      return [...xs, { name: m.name, category: m.category || '', qty: 1, unit_price_paise: m.price_paise, cost_paise: m.cost_paise ?? null, free: false }]
+    })
+    setErr('')
+  }
+  function addItem() {
+    const name = f.name.trim()
+    const qty = parseInt(f.qty || '1')
+    const price = toPaise(f.price)
     if (!name || qty < 1 || price < 0) return setErr('Item needs a name, quantity and price.')
-    setItems(xs => [...xs, { name, category, qty, unit_price_paise: price, free: false }])
+    setItems(xs => {
+      const i = xs.findIndex(x => x.name === name && !x.free)
+      if (i >= 0) { const copy = [...xs]; copy[i] = { ...copy[i], qty: copy[i].qty + qty }; return copy }
+      return [...xs, { name, category: f.category.trim(), qty, unit_price_paise: price, cost_paise: null, free: false }]
+    })
     setF({ name: '', category: '', qty: '1', price: '' }); setErr('')
   }
   const subtotal = () => items.reduce((s, i) => s + i.qty * i.unit_price_paise, 0)
@@ -137,11 +154,16 @@ export default function Staff() {
   const maxWallet = () => Math.min(cust?.wallet_balance_paise || 0, estTotal())
   const unlocked = () => prog.filter(p => Math.floor(p.stamps_earned / p.stamp_rules.required_count) - (p.rewards_redeemed || 0) > 0)
   const affordable = () => rewards.filter(r => cust && cust.points_balance >= r.required_points && (r.max_per_customer === 0 || (redCount[r.id] || 0) < r.max_per_customer))
+  const isBday = (() => {
+    if (!cust?.birth_date) return false
+    const d = new Date(cust.birth_date + 'T00:00:00'); const t = new Date()
+    return d.getDate() === t.getDate() && d.getMonth() === t.getMonth()
+  })()
 
   function applyStamp(p) {
     const rule = p.stamp_rules
     if (rule.reward_type === 'free_item')
-      setItems(xs => [...xs, { name: rule.reward_label || ('Free ' + rule.target_value), category: rule.target_value, qty: 1, unit_price_paise: 0, free: true }])
+      setItems(xs => [...xs, { name: rule.reward_label || ('Free ' + rule.target_value), category: rule.target_value, qty: 1, unit_price_paise: 0, cost_paise: null, free: true }])
     setStampSel(p.stamp_rule_id); setRewardSel(null)
   }
 
@@ -164,6 +186,15 @@ export default function Staff() {
     setResult({ kind: 'order', ...data }); idemRef.current = null
     setItems([]); setWalletAmt(''); setRewardSel(null); setStampSel(null)
     if (cust) loadCustomer(cust)
+  }
+
+  function feedbackUrl(orderId) {
+    return window.location.origin + '/customer?slug=' + rest.slug +
+      '&qr=' + encodeURIComponent(cust.qr_code) + '&k=' + cust.qr_secret + '&fb=' + orderId
+  }
+  function sendFeedbackReq() {
+    const txt = 'Thank you for visiting ' + (rest.name || 'us') + '! How was everything today? Rate your visit here: ' + feedbackUrl(result.order_id)
+    window.open('https://wa.me/?text=' + encodeURIComponent(txt), '_blank')
   }
 
   async function doTopup() {
@@ -201,16 +232,30 @@ export default function Staff() {
     loadCustomer(cust)
   }
 
+  async function claimBday() {
+    if (!confirm('Credit the birthday bonus to ' + (cust.name || 'this customer') + '? Once per year.')) return
+    setBusy(true); setErr('')
+    const { data, error } = await supabase.rpc('claim_birthday', {
+      p_restaurant_id: me.restaurant_id, p_customer_id: cust.id,
+    })
+    setBusy(false)
+    if (error) return setErr(errMsg(error))
+    setResult({ kind: 'bday', amount: data.amount_paise, balance: data.balance_after })
+    loadCustomer(cust)
+  }
+
   async function addCustomer() {
     if (!nc.phone || nc.phone.length < 8) return setErr('Enter a valid phone number.')
     setBusy(true); setErr('')
     const { data, error } = await supabase.rpc('create_customer', {
       p_restaurant_id: me.restaurant_id, p_phone: nc.phone, p_name: nc.name || null,
+      p_birth_date: nc.birth || null, p_anniversary_date: nc.anniv || null,
+      p_referral_code: nc.ref ? nc.ref.trim().toUpperCase() : null,
     })
     setBusy(false)
     if (error) return setErr(errMsg(error))
     setLink({ url: customerLink(rest.slug, data.qr_code, data.qr_secret) })
-    setNc({ name: '', phone: '' })
+    setNc({ name: '', phone: '', birth: '', anniv: '', ref: '' })
     findCustomer({ qr: data.qr_code })
   }
 
@@ -218,6 +263,7 @@ export default function Staff() {
   if (phase === 'error') return <div className="wrap"><div className="err">{err}</div><a className="btn" href="/login">Back to login</a></div>
 
   const t = cust && cfg ? tierFor(cust.lifetime_points, cfg.tiers) : null
+  const menuCats = [...new Set(menu.map(m => m.category || 'Other'))]
 
   return <div className="wrap">
     <div className="spread" style={{ marginBottom: 8 }}>
@@ -264,6 +310,11 @@ export default function Staff() {
           </div>
           <button className="btn slim" onClick={() => { try { sessionStorage.removeItem('tessera_staff_cust') } catch (e) {} setCust(null); setItems([]) }}>Change</button>
         </div>
+        {isBday && <div className="ok sm" style={{ marginTop: 10 }}>
+          Birthday today! {mk && mk.birthday_paise > 0
+            ? <button className="btn slim primary" style={{ marginLeft: 8 }} disabled={busy} onClick={claimBday}>Credit {inr(mk.birthday_paise)} birthday bonus</button>
+            : 'Treat them to something on the house.'}
+        </div>}
         <div className="row" style={{ marginTop: 12 }}>
           <div className="grow">
             <div className="xs muted">WALLET</div>
@@ -310,21 +361,34 @@ export default function Staff() {
           </button>
         </div>)}
 
-        {recent.length > 0 && <div className="row" style={{ flexWrap: 'wrap', marginBottom: 8 }}>
-          {recent.map(it => <button key={it.name} className="chip" style={{ cursor: 'pointer' }} onClick={() => addItem(it)}>
+        {menu.length > 0 && menuCats.map(cat => <div key={cat}>
+          <div className="xs muted" style={{ margin: '10px 0 4px' }}>{cat.toUpperCase()}</div>
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            {menu.filter(m => (m.category || 'Other') === cat).map(m =>
+              <button key={m.id} className="chip" style={{ cursor: 'pointer', fontSize: 13.5 }} onClick={() => addMenu(m)}>
+                {m.name} · {inr(m.price_paise)}
+              </button>)}
+          </div>
+        </div>)}
+        {menu.length === 0 && recent.length > 0 && <div className="row" style={{ flexWrap: 'wrap', marginBottom: 8 }}>
+          {recent.map(it => <button key={it.name} className="chip" style={{ cursor: 'pointer' }} onClick={() => { setItems(xs => [...xs, { name: it.name, category: it.category || '', qty: 1, unit_price_paise: it.unit_price_paise, cost_paise: null, free: false }]); setErr('') }}>
             + {it.name} · {inr(it.unit_price_paise)}
           </button>)}
         </div>}
+        {menu.length === 0 && <p className="xs muted">No menu yet — the admin can build it under Admin, Menu. Custom items still work below.</p>}
 
-        <div className="row">
-          <input className="input grow" placeholder="Item name" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
-          <input className="input" style={{ width: 90 }} placeholder="Category" value={f.category} onChange={e => setF({ ...f, category: e.target.value })} />
-        </div>
-        <div className="row" style={{ marginTop: 8 }}>
-          <input className="input" style={{ width: 70 }} type="number" min="1" value={f.qty} onChange={e => setF({ ...f, qty: e.target.value })} />
-          <input className="input grow" type="number" min="0" step="0.01" placeholder="Price ₹" value={f.price} onChange={e => setF({ ...f, price: e.target.value })} />
-          <button className="btn slim primary" onClick={() => addItem()}>Add</button>
-        </div>
+        <details className="sec" style={{ marginTop: 10 }}>
+          <summary className="sm">Custom item</summary>
+          <div className="row" style={{ marginTop: 8 }}>
+            <input className="input grow" placeholder="Item name" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
+            <input className="input" style={{ width: 90 }} placeholder="Category" value={f.category} onChange={e => setF({ ...f, category: e.target.value })} />
+          </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <input className="input" style={{ width: 70 }} type="number" min="1" value={f.qty} onChange={e => setF({ ...f, qty: e.target.value })} />
+            <input className="input grow" type="number" min="0" step="0.01" placeholder="Price ₹" value={f.price} onChange={e => setF({ ...f, price: e.target.value })} />
+            <button className="btn slim primary" onClick={addItem}>Add</button>
+          </div>
+        </details>
 
         {items.length > 0 && <div style={{ marginTop: 12 }}>
           {items.map((it, i) => <div key={i} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
@@ -376,7 +440,7 @@ export default function Staff() {
       {tab === 'stamps' && <div className="card">
         <h2>Stamp cards</h2>
         <p className="sm muted">Add stamps manually — for paper card migration or a missed scan. Every add is logged in History with your name.</p>
-        {rules.length === 0 && <p className="sm muted">No stamp rules configured yet — the admin adds them under Admin → Offers.</p>}
+        {rules.length === 0 && <p className="sm muted">No stamp rules configured yet — the admin adds them under Admin, Offers.</p>}
         {rules.map(r => {
           const p = prog.find(x => x.stamp_rule_id === r.id)
           const earned = p?.stamps_earned || 0
@@ -398,11 +462,11 @@ export default function Staff() {
         <h2>Recent activity</h2>
         {orders.length === 0 && wtx.length === 0 && stx.length === 0 && <p className="sm muted">Nothing yet for this customer.</p>}
         {wtx.filter(x => x.type === 'topup' || x.type === 'adjustment').map(x => <div key={x.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
-          <span><b className="num">{x.amount_paise > 0 ? '+' : ''}{inr(x.amount_paise)}</b> <span className="muted">{x.type === 'topup' ? 'top-up' + (x.bonus_paise ? ' (bonus ' + inr(x.bonus_paise) + ')' : '') : 'adjustment'}</span>{x.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {x.created_by_name}</span>}</span>
+          <span><b className="num">{x.amount_paise > 0 ? '+' : ''}{inr(x.amount_paise)}</b> <span className="muted">{x.type === 'topup' ? 'top-up' + (x.bonus_paise ? ' (bonus ' + inr(x.bonus_paise) + ')' : '') : (x.note || 'adjustment')}</span>{x.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {x.created_by_name}</span>}</span>
           <span className="muted xs">{fmtDate(x.created_at)}</span>
         </div>)}
         {stx.map(x => <div key={x.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
-          <span><b className="num">{x.reward_redeemed ? '🎁' : '+' + x.stamps_awarded}</b> <span className="muted">{x.reward_redeemed ? 'reward redeemed' : 'stamp' + (x.stamps_awarded > 1 ? 's' : '')} · {x.stamp_rules?.name}</span>{x.note && !x.reward_redeemed && <span className="xs muted"> ({x.note})</span>}{x.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {x.created_by_name}</span>}</span>
+          <span><b className="num">{x.reward_redeemed ? 'reward' : '+' + x.stamps_awarded}</b> <span className="muted">{x.reward_redeemed ? 'redeemed · ' : 'stamp' + (x.stamps_awarded > 1 ? 's' : '') + ' · '}{x.stamp_rules?.name}</span>{x.note && !x.reward_redeemed && <span className="xs muted"> ({x.note})</span>}{x.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {x.created_by_name}</span>}</span>
           <span className="muted xs">{fmtDate(x.created_at)}</span>
         </div>)}
         {orders.map(o => <div key={o.id} style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
@@ -413,11 +477,17 @@ export default function Staff() {
       </div>}
 
       {tab === 'addcust' && <div className="card">
-        <p className="sm muted">Creates a new loyalty customer and shows their QR + personal portal link.</p>
+        <p className="sm muted">Creates a new loyalty customer with their QR + portal link. Birthdays power the birthday reward; a referral code credits both wallets instantly.</p>
         <label className="label">Name (optional)</label>
         <input className="input" value={nc.name} onChange={e => setNc({ ...nc, name: e.target.value })} />
         <label className="label">Phone</label>
         <input className="input" type="tel" value={nc.phone} onChange={e => setNc({ ...nc, phone: e.target.value })} />
+        <div className="row">
+          <div className="grow"><label className="label">Birthday (optional)</label><input className="input" type="date" value={nc.birth} onChange={e => setNc({ ...nc, birth: e.target.value })} /></div>
+          <div className="grow"><label className="label">Anniversary (optional)</label><input className="input" type="date" value={nc.anniv} onChange={e => setNc({ ...nc, anniv: e.target.value })} /></div>
+        </div>
+        <label className="label">Referral code from a friend (optional)</label>
+        <input className="input" style={{ textTransform: 'uppercase' }} value={nc.ref} onChange={e => setNc({ ...nc, ref: e.target.value })} placeholder="e.g. A3F9K2" />
         <div style={{ height: 16 }} />
         <button className="btn primary" disabled={busy} onClick={addCustomer}>{busy ? 'Creating…' : 'Create customer'}</button>
       </div>}
@@ -439,6 +509,12 @@ export default function Staff() {
               <p>Card total: <b className="num">{result.total}</b> stamps</p>
               {result.unlocked > 0 && <div className="ok sm" style={{ marginTop: 8 }}>{result.unlocked} reward ready — apply it on the next bill.</div>}
             </>
+          : result.kind === 'bday'
+          ? <>
+              <h2>Birthday credit given</h2>
+              <p>Added <b className="num">{inr(result.amount)}</b> to the wallet.</p>
+              <p className="sm muted">New balance <b className="num">{inr(result.balance)}</b></p>
+            </>
           : result.kind === 'topup'
           ? <>
               <h2>Top-up done</h2>
@@ -456,6 +532,10 @@ export default function Staff() {
               </>}
               {(result.stamps || []).filter(s => s.unlocked_now > 0).map(s =>
                 <div key={s.rule_id} className="ok sm" style={{ marginTop: 8 }}>Stamp card reward unlocked — customer now has {s.unlocked_now} free reward(s).</div>)}
+              {cust && result.order_id && <>
+                <div style={{ height: 12 }} />
+                <button className="btn" onClick={sendFeedbackReq}>Ask for feedback on WhatsApp</button>
+              </>}
             </>}
         <div style={{ height: 14 }} />
         <button className="btn primary" onClick={() => setResult(null)}>Done</button>
