@@ -12,8 +12,7 @@ export default function Admin() {
   const [phase, setPhase] = useState('loading'); const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
   const [rest, setRest] = useState(null); const [tab, setTab] = useState('overview')
   // overview
-  const [range, setRange] = useState(6); const [stats, setStats] = useState(null); const [ordersRaw, setOrdersRaw] = useState([])
-  // offers
+  const [range, setRange] = useState(6); const [stats, setStats] = useState(null); const [ordersRaw, setOrdersRaw] = useState([]); const [wtxRaw, setWtxRaw] = useState([])  // offers
   const [ws, setWs] = useState(null); const [wsF, setWsF] = useState({ name: 'Wallet offer', min: '500', bonus: '10', cap: '' })
   const [rules, setRules] = useState([]); const [ruleF, setRuleF] = useState({ name: '', target_type: 'item', target_value: '', required_count: '10', reward_type: 'free_item', reward_value: '1', reward_label: '' })
   const [pc, setPc] = useState(null); const [pcF, setPcF] = useState({ per100: '1', active: true, b0: '0', b1: '500', b2: '1000', b3: '2500' })
@@ -40,14 +39,15 @@ export default function Admin() {
 
   useEffect(() => { if (!rest) return; loadOffers(); loadStaff(); loadOutlets() }, [rest])
   useEffect(() => { if (rest && tab === 'overview') loadStats() }, [rest, tab, range])
-
-  async function loadStats() {
+  useEffect(() => { if (rest && tab === 'customers') searchCusts('') }, [rest, tab])
+    async function loadStats() {
     const from = dayStart(range)
-    const [o, w] = await Promise.all([
+    const [o, w, cb] = await Promise.all([
       supabase.from('orders').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false }),
-      supabase.from('wallet_transactions').select('amount_paise, bonus_paise').eq('restaurant_id', rest.id).eq('type', 'topup').gte('created_at', from),
+      supabase.from('wallet_transactions').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false }),
+      supabase.from('customers').select('wallet_balance_paise').eq('restaurant_id', rest.id),
     ])
-    const ords = o.data || []
+    const ords = o.data || []; const wtx = w.data || []
     const byMethod = {}
     ords.forEach(x => { byMethod[x.payment_method] = (byMethod[x.payment_method] || 0) + x.other_paid_paise })
     const itemAgg = {}
@@ -55,18 +55,22 @@ export default function Admin() {
       if (!itemAgg[it.name]) itemAgg[it.name] = { qty: 0, amt: 0 }
       itemAgg[it.name].qty += it.qty; itemAgg[it.name].amt += it.qty * it.unit_price_paise
     }))
+    const tops = wtx.filter(x => x.type === 'topup')
     setStats({
       revenue: ords.reduce((s, x) => s + x.total_paise, 0),
       bills: ords.length,
       customers: new Set(ords.map(x => x.customer_id).filter(Boolean)).size,
       walletSales: ords.reduce((s, x) => s + x.wallet_paid_paise, 0),
       byMethod, itemAgg,
-      topups: (w.data || []).reduce((s, x) => s + x.amount_paise + x.bonus_paise, 0),
+      topups: tops.reduce((s, x) => s + x.amount_paise + x.bonus_paise, 0),
+      topupCash: tops.reduce((s, x) => s + x.amount_paise, 0),
+      bonusGiven: tops.reduce((s, x) => s + (x.bonus_paise || 0), 0),
       points: ords.reduce((s, x) => s + x.points_earned, 0),
+      cashHandover: (byMethod['cash'] || 0) + tops.filter(x => x.payment_method === 'cash').reduce((s, x) => s + x.amount_paise, 0),
+      walletLiability: (cb.data || []).reduce((s, x) => s + x.wallet_balance_paise, 0),
     })
-    setOrdersRaw(ords)
+    setOrdersRaw(ords); setWtxRaw(wtx)
   }
-
   async function loadOffers() {
     const rid = rest.id
     const [w, sr, p, rw] = await Promise.all([
@@ -140,9 +144,12 @@ export default function Admin() {
   async function updStaff(id, vals) { await supabase.from('restaurant_users').update(vals).eq('id', id); loadStaff() }
 
   async function searchCusts(s) {
-    setQ(s); if (s.length < 2) return setCusts([])
-    const { data } = await supabase.from('customers').select('*')
-      .eq('restaurant_id', rest.id).or(`phone.ilike.%${s}%,name.ilike.%${s}%`).limit(10)
+    setQ(s)
+    const clean = s.replace(/[,()]/g, '')
+    const query = supabase.from('customers').select('*').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(50)
+    const { data } = clean.length >= 2
+      ? await query.or(`phone.ilike.%${clean}%,name.ilike.%${clean}%`)
+      : await query
     setCusts(data || [])
   }
   async function openCust(c) {
@@ -165,6 +172,11 @@ export default function Admin() {
 
   if (loadErr) return <div className="wrap"><div className="err sm">{loadErr}</div><div style={{ height: 10 }} /><button className="btn" onClick={() => window.location.reload()}>Retry</button></div>
   if (!rest) return <div className="wrap"><p className="muted">Loading…</p></div>
+  const ledgerRows = [
+    ...ordersRaw.map(o => ({ at: o.created_at, what: 'Bill — ' + o.payment_method, cash: o.other_paid_paise, wallet: o.wallet_paid_paise, credit: 0 })),
+    ...wtxRaw.filter(x => x.type === 'topup').map(x => ({ at: x.created_at, what: 'Wallet top-up (' + (x.payment_method || 'cash') + ')', cash: x.amount_paise, wallet: 0, credit: x.bonus_paise || 0 })),
+    ...wtxRaw.filter(x => x.type === 'adjustment').map(x => ({ at: x.created_at, what: 'Adjustment — ' + (x.note || 'manual'), cash: 0, wallet: 0, credit: x.amount_paise })),
+  ].sort((a, b) => new Date(b.at) - new Date(a.at))
 
   return <div className="wrap wide">
     <div className="spread" style={{ marginBottom: 14 }}>
@@ -175,8 +187,8 @@ export default function Admin() {
     {err && <div className="err sm">{err}</div>}
 
     <div className="tabs">
-      {['overview', 'offers', 'staff', 'customers', 'outlets'].map(t =>
-        <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}
+      {['overview', 'books', 'offers', 'staff', 'customers', 'outlets'].map(t =>
+      <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}
     </div>
 
     {tab === 'overview' && <>
@@ -212,6 +224,47 @@ export default function Admin() {
             ...ordersRaw.map(o => [fmtDate(o.created_at), o.outlet_id, o.total_paise / 100, o.wallet_paid_paise / 100, o.other_paid_paise / 100, o.payment_method, o.points_earned]),
           ])}>Export orders CSV</button>
         </>}
+      </div>
+    </>}
+    {tab === 'books' && <>
+      <div className="card">
+        <div className="spread">
+          <h2>Accounts</h2>
+          <select className="select" style={{ width: 'auto' }} value={range} onChange={e => setRange(parseInt(e.target.value))}>
+            <option value="0">Today</option><option value="6">Last 7 days</option><option value="29">Last 30 days</option>
+          </select>
+        </div>
+        {stats && <>
+          <table className="t"><tbody>
+            <tr><td><b>Sales ({stats.bills} bills)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.revenue)}</b></td></tr>
+            <tr><td className="muted">— collected at counter ({Object.entries(stats.byMethod).map(([m, v]) => m + ' ' + inr(v)).join(', ') || '—'})</td><td className="num" style={{ textAlign: 'right' }}>{inr(stats.revenue - stats.walletSales)}</td></tr>
+            <tr><td className="muted">— settled from wallet</td><td className="num" style={{ textAlign: 'right' }}>{inr(stats.walletSales)}</td></tr>
+            <tr><td><b>Wallet top-ups received (cash in)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.topupCash)}</b></td></tr>
+            <tr><td className="muted">— bonus credit given free</td><td className="num" style={{ textAlign: 'right' }}>−{inr(stats.bonusGiven)}</td></tr>
+            <tr><td><b>Cash to reconcile (cash sales + cash top-ups)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.cashHandover)}</b></td></tr>
+            <tr><td className="muted">Wallet liability owed to customers (current)</td><td className="num" style={{ textAlign: 'right' }}>{inr(stats.walletLiability)}</td></tr>
+            <tr><td className="muted">Points issued in period</td><td className="num" style={{ textAlign: 'right' }}>{stats.points}</td></tr>
+            <tr><td><b>Sales − bonus credits (indicative)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.revenue - stats.bonusGiven)}</b></td></tr>
+          </tbody></table>
+          <p className="xs muted" style={{ marginTop: 10 }}>
+            "Indicative" is not true profit — food/ingredient costs aren't tracked here. Bonus credits are the direct marketing cost of the wallet offer, and wallet liability is money customers can still spend at your outlets. Export the ledger below for your accountant.
+          </p>
+        </>}
+      </div>
+      <div className="card">
+        <div className="spread"><h3>Ledger</h3><button className="btn slim" onClick={() => downloadCsv(`ledger-${rest.slug}.csv`, [
+          ['Date', 'Detail', 'Counter collected', 'Wallet', 'Credit/bonus out'],
+          ...ledgerRows.map(r => [fmtDate(r.at), r.what, r.cash / 100, r.wallet / 100, r.credit / 100]),
+        ])}>Export CSV</button></div>
+        <table className="t"><thead><tr><th>Date</th><th>Detail</th><th>Counter</th><th>Wallet</th><th>Credit out</th></tr></thead><tbody>
+          {ledgerRows.slice(0, 100).map((r, i) => <tr key={i}>
+            <td className="xs">{fmtDate(r.at)}</td><td className="sm">{r.what}</td>
+            <td className="num">{r.cash ? inr(r.cash) : ''}</td>
+            <td className="num">{r.wallet ? inr(r.wallet) : ''}</td>
+            <td className="num">{r.credit ? inr(r.credit) : ''}</td>
+          </tr>)}
+        </tbody></table>
+        {ledgerRows.length === 0 && <p className="sm muted">No entries in this period.</p>}
       </div>
     </>}
 
@@ -277,7 +330,7 @@ export default function Admin() {
     </div>}
 
     {tab === 'customers' && <div className="card">
-      <h2>Customers</h2>
+      <h2>Customers {custs.length > 0 && <span className="muted sm">({custs.length}{q.length < 2 ? ' most recent' : ' found'})</span>}</h2>
       <input className="input" placeholder="Search phone or name" value={q} onChange={e => searchCusts(e.target.value)} />
       {custs.map(c => <div key={c.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', cursor: 'pointer' }} onClick={() => openCust(c)}>
         <span><b>{c.name || 'Customer'}</b> <span className="muted num">{c.phone}</span></span>
