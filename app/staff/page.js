@@ -2,8 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { supabase } from '../../lib/supabase'
-import { inr, toPaise, tierFor, parseQr, errMsg, customerLink } from '../../lib/helpers'
-
+import { inr, toPaise, fmtDate, tierFor, parseQr, errMsg, customerLink } from '../../lib/helpers'
 export default function Staff() {
   const [phase, setPhase] = useState('loading')
   const [err, setErr] = useState(''); const [busy, setBusy] = useState(false)
@@ -15,6 +14,8 @@ export default function Staff() {
   const [prog, setProg] = useState([]); const [cfg, setCfg] = useState(null)
   const [rewards, setRewards] = useState([]); const [redCount, setRedCount] = useState({})
   const [recent, setRecent] = useState([])
+  const [results, setResults] = useState(null)
+  const [orders, setOrders] = useState([]); const [wtx, setWtx] = useState([])
   // bill
   const [items, setItems] = useState([])
   const [f, setF] = useState({ name: '', category: '', qty: '1', price: '' })
@@ -50,16 +51,18 @@ export default function Staff() {
 
   async function loadCustomer(c) {
     setCust(c); setResult(null); setItems([]); setWalletAmt('')
-    setRewardSel(null); setStampSel(null); setTab('bill'); setErr('')
+    setRewardSel(null); setStampSel(null); setTab('bill'); setErr(''); setResults(null)
     const rid = c.restaurant_id
-    const [pr, cf, rw, rd, ro] = await Promise.all([
+    const [pr, cf, rw, rd, ro, wt] = await Promise.all([
       supabase.from('customer_stamp_progress').select('*, stamp_rules(name, required_count, reward_type, reward_value, reward_label, target_value)').eq('customer_id', c.id),
       supabase.from('points_config').select('*').eq('restaurant_id', rid).maybeSingle(),
       supabase.from('rewards').select('*').eq('restaurant_id', rid).eq('active', true),
       supabase.from('reward_redemptions').select('reward_id').eq('customer_id', c.id),
-      supabase.from('orders').select('items').eq('restaurant_id', rid).order('created_at', { ascending: false }).limit(15),
+      supabase.from('orders').select('*').eq('restaurant_id', rid).eq('customer_id', c.id).order('created_at', { ascending: false }).limit(15),
+      supabase.from('wallet_transactions').select('*').eq('customer_id', c.id).order('created_at', { ascending: false }).limit(10),
     ])
     setProg(pr.data || []); setCfg(cf.data); setRewards(rw.data || [])
+    setOrders(ro.data || []); setWtx(wt.data || [])
     const counts = {}; (rd.data || []).forEach(x => counts[x.reward_id] = (counts[x.reward_id] || 0) + 1)
     setRedCount(counts)
     const seen = {}; const list = []
@@ -69,16 +72,18 @@ export default function Staff() {
     setRecent(list.slice(0, 8))
   }
 
-  async function findCustomer({ qr, phone: ph }) {
-    setBusy(true); setErr('')
+    async function findCustomer({ qr, term }) {
+    setBusy(true); setErr(''); setResults(null)
+    const clean = (term || '').replace(/[,()]/g, '')
     const base = supabase.from('customers').select('*').eq('restaurant_id', me.restaurant_id)
     const { data, error } = qr
       ? await base.eq('qr_code', qr).maybeSingle()
-      : await base.ilike('phone', '%' + ph + '%').limit(2)
+      : await base.or(`phone.ilike.%${clean}%,name.ilike.%${clean}%`).limit(6)
     setBusy(false)
     if (error) return setErr(errMsg(error))
     if (!data || (Array.isArray(data) && data.length === 0))
-      return setErr('No customer found. Use the "Add customer" tab to create one.')
+      return setErr('No customer found. Use "Add customer" to create one.')
+    if (Array.isArray(data) && data.length > 1) return setResults(data)
     loadCustomer(Array.isArray(data) ? data[0] : data)
   }
 
@@ -213,10 +218,16 @@ export default function Staff() {
           <input className="input grow" placeholder="Or enter QR code" value={manual} onChange={e => setManual(e.target.value)} />
           <button className="btn slim" disabled={busy || !manual} onClick={() => findCustomer({ qr: manual.trim() })}>Go</button>
         </div>
-        <div className="row" style={{ marginTop: 8 }}>
-          <input className="input grow" placeholder="Or search phone" value={phone} onChange={e => setPhone(e.target.value)} />
-          <button className="btn slim" disabled={busy || phone.length < 3} onClick={() => findCustomer({ phone })}>Search</button>
+               <div className="row" style={{ marginTop: 8 }}>
+          <input className="input grow" placeholder="Search name or phone" value={phone} onChange={e => setPhone(e.target.value)} />
+          <button className="btn slim" disabled={busy || phone.length < 3} onClick={() => findCustomer({ term: phone })}>Search</button>
         </div>
+        {results && <div style={{ marginTop: 10 }}>
+          {results.map(r => <div key={r.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', cursor: 'pointer' }} onClick={() => { setResults(null); loadCustomer(r) }}>
+            <span><b>{r.name || 'Customer'}</b> <span className="muted num">{r.phone}</span></span>
+            <span className="chip">{inr(r.wallet_balance_paise)}</span>
+          </div>)}
+        </div>}
       </>}
       {cust && <>
         <div className="spread">
@@ -257,7 +268,7 @@ export default function Staff() {
         <button className={tab === 'bill' ? 'on' : ''} onClick={() => setTab('bill')}>New bill</button>
         <button className={tab === 'topup' ? 'on' : ''} onClick={() => setTab('topup')}>Top-up</button>
         <button className={tab === 'addcust' ? 'on' : ''} onClick={() => setTab('addcust')}>Add customer</button>
-      </div>
+        <button className={tab === 'hist' ? 'on' : ''} onClick={() => setTab('hist')}>History</button>      </div>
 
       {tab === 'bill' && <div className="card">
         {unlocked().map(p => <div key={p.stamp_rule_id} className="row" style={{ marginBottom: 8 }}>
@@ -334,16 +345,20 @@ export default function Staff() {
         <button className="btn primary" disabled={busy} onClick={doTopup}>{busy ? 'Saving…' : 'Confirm top-up'}</button>
       </div>}
 
-      {tab === 'addcust' && <div className="card">
-        <p className="sm muted">Creates a new loyalty customer and shows their QR + personal portal link.</p>
-        <label className="label">Name (optional)</label>
-        <input className="input" value={nc.name} onChange={e => setNc({ ...nc, name: e.target.value })} />
-        <label className="label">Phone</label>
-        <input className="input" type="tel" value={nc.phone} onChange={e => setNc({ ...nc, phone: e.target.value })} />
-        <div style={{ height: 16 }} />
-        <button className="btn primary" disabled={busy} onClick={addCustomer}>{busy ? 'Creating…' : 'Create customer'}</button>
+           {tab === 'hist' && <div className="card">
+        <h2>Recent activity</h2>
+        {orders.length === 0 && wtx.length === 0 && <p className="sm muted">Nothing yet for this customer.</p>}
+        {wtx.filter(x => x.type === 'topup' || x.type === 'adjustment').map(x => <div key={x.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
+          <span><b className="num">{x.amount_paise > 0 ? '+' : ''}{inr(x.amount_paise)}</b> <span className="muted">{x.type === 'topup' ? 'top-up' + (x.bonus_paise ? ' (bonus ' + inr(x.bonus_paise) + ')' : '') : 'adjustment'}</span></span>
+          <span className="muted xs">{fmtDate(x.created_at)}</span>
+        </div>)}
+        {orders.map(o => <div key={o.id} style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
+          <div className="spread sm"><span><b className="num">{inr(o.total_paise)}</b> <span className="muted">bill</span>{o.points_earned > 0 && <span className="chip a" style={{ marginLeft: 6 }}>+{o.points_earned} pts</span>}</span><span className="muted xs">{fmtDate(o.created_at)}</span></div>
+          <div className="xs muted">{(o.items || []).map(it => `${it.name} ×${it.qty}${it.free ? ' (free)' : ''}`).join(', ')}</div>
+          <div className="xs muted num">Wallet {inr(o.wallet_paid_paise)} · {o.payment_method} {inr(o.other_paid_paise)}</div>
+        </div>)}
       </div>}
-    </>}
+
 
     {!cust && <div className="card">
       <h3>New customer? Add them here</h3>
