@@ -15,7 +15,8 @@ export default function Staff() {
   const [rewards, setRewards] = useState([]); const [redCount, setRedCount] = useState({})
   const [recent, setRecent] = useState([])
   const [results, setResults] = useState(null)
-  const [orders, setOrders] = useState([]); const [wtx, setWtx] = useState([])
+  const [orders, setOrders] = useState([]); const [wtx, setWtx] = useState([]); const [stx, setStx] = useState([])
+  const [rules, setRules] = useState([]); const [stampQty, setStampQty] = useState({})
   const [items, setItems] = useState([])
   const [f, setF] = useState({ name: '', category: '', qty: '1', price: '' })
   const [walletAmt, setWalletAmt] = useState(''); const [payMethod, setPayMethod] = useState('cash')
@@ -36,13 +37,14 @@ export default function Staff() {
       .select('*, restaurants(name, slug)').eq('user_id', session.user.id).limit(1)
     if (!ru?.length) { setErr('This account is not linked to a restaurant.'); return setPhase('error') }
     setMe(ru[0]); setRest(ru[0].restaurants)
-    const { data: outs } = await supabase.from('outlets')
-      .select('*').eq('restaurant_id', ru[0].restaurant_id).eq('status', 'active')
-    setOutlets(outs || []); if (outs?.length) setOutletId(outs[0].id)
-    const { data: sch } = await supabase.from('wallet_schemes').select('*')
-      .eq('restaurant_id', ru[0].restaurant_id).eq('active', true)
-      .order('created_at', { ascending: false }).limit(1)
-    setScheme(sch?.[0] || null)
+    const [outs, sch, sr] = await Promise.all([
+      supabase.from('outlets').select('*').eq('restaurant_id', ru[0].restaurant_id).eq('status', 'active'),
+      supabase.from('wallet_schemes').select('*').eq('restaurant_id', ru[0].restaurant_id).eq('active', true).order('created_at', { ascending: false }).limit(1),
+      supabase.from('stamp_rules').select('*').eq('restaurant_id', ru[0].restaurant_id).eq('active', true).order('created_at'),
+    ])
+    setOutlets(outs.data || []); if (outs.data?.length) setOutletId(outs.data[0].id)
+    setScheme(sch.data?.[0] || null)
+    setRules(sr.data || [])
     const savedId = (() => { try { return sessionStorage.getItem('tessera_staff_cust') } catch (e) { return null } })()
     if (savedId) {
       const { data: sc } = await supabase.from('customers').select('*').eq('id', savedId).maybeSingle()
@@ -56,7 +58,7 @@ export default function Staff() {
     setRewardSel(null); setStampSel(null); setTab('bill'); setErr(''); setResults(null)
     try { sessionStorage.setItem('tessera_staff_cust', c.id) } catch (e) {}
     const rid = c.restaurant_id
-    const [cf2, pr, cf, rw, rd, ro, wt] = await Promise.all([
+    const [cf2, pr, cf, rw, rd, ro, wt, st] = await Promise.all([
       supabase.from('customers').select('*').eq('id', c.id).single(),
       supabase.from('customer_stamp_progress').select('*, stamp_rules(name, required_count, reward_type, reward_value, reward_label, target_value)').eq('customer_id', c.id),
       supabase.from('points_config').select('*').eq('restaurant_id', rid).maybeSingle(),
@@ -64,10 +66,11 @@ export default function Staff() {
       supabase.from('reward_redemptions').select('reward_id').eq('customer_id', c.id),
       supabase.from('orders').select('*').eq('restaurant_id', rid).eq('customer_id', c.id).order('created_at', { ascending: false }).limit(15),
       supabase.from('wallet_transactions').select('*').eq('customer_id', c.id).order('created_at', { ascending: false }).limit(10),
+      supabase.from('stamp_transactions').select('*, stamp_rules(name)').eq('customer_id', c.id).order('created_at', { ascending: false }).limit(10),
     ])
     if (cf2.data) setCust(cf2.data)
     setProg(pr.data || []); setCfg(cf.data); setRewards(rw.data || [])
-    setOrders(ro.data || []); setWtx(wt.data || [])
+    setOrders(ro.data || []); setWtx(wt.data || []); setStx(st.data || [])
     const counts = {}; (rd.data || []).forEach(x => counts[x.reward_id] = (counts[x.reward_id] || 0) + 1)
     setRedCount(counts)
     const seen = {}; const list = []
@@ -76,6 +79,7 @@ export default function Staff() {
     }))
     setRecent(list.slice(0, 8))
   }
+
   async function findCustomer({ qr, term }) {
     setBusy(true); setErr(''); setResults(null)
     const clean = (term || '').replace(/[,()]/g, '')
@@ -179,6 +183,24 @@ export default function Staff() {
     loadCustomer(cust)
   }
 
+  async function addStamps(ruleId, qty) {
+    const n = parseInt(qty)
+    if (!n || n < 1) return setErr('Enter how many stamps to add.')
+    if (n > 50) return setErr('Maximum 50 stamps per entry.')
+    if (!outletId) return setErr('No outlet set. Ask the admin to add one, then reload this page.')
+    if (n > 1 && !confirm('Manually add ' + n + ' stamps? This is logged in History with your name.')) return
+    setBusy(true); setErr('')
+    const { data, error } = await supabase.rpc('add_stamps', {
+      p_restaurant_id: me.restaurant_id, p_outlet_id: outletId, p_customer_id: cust.id,
+      p_stamp_rule_id: ruleId, p_count: n,
+    })
+    setBusy(false)
+    if (error) return setErr(errMsg(error))
+    setResult({ kind: 'stamps', total: data.total, unlocked: data.unlocked })
+    setStampQty({})
+    loadCustomer(cust)
+  }
+
   async function addCustomer() {
     if (!nc.phone || nc.phone.length < 8) return setErr('Enter a valid phone number.')
     setBusy(true); setErr('')
@@ -219,16 +241,12 @@ export default function Staff() {
       {!cust && <>
         {!scanning && <button className="btn primary" onClick={startScan}>Scan customer QR</button>}
         {scanning && <button className="btn" onClick={stopScan}>Stop camera</button>}
-              <div className="row" style={{ marginTop: 10 }}>
+        <div className="row" style={{ marginTop: 10 }}>
           <input className="input grow" placeholder="Or enter QR code" value={manual} onChange={e => setManual(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && manual.trim()) findCustomer({ qr: manual.trim() }) }} />
           <button className="btn slim" disabled={busy || !manual} onClick={() => findCustomer({ qr: manual.trim() })}>Go</button>
         </div>
         <div className="row" style={{ marginTop: 8 }}>
           <input className="input grow" placeholder="Search name or phone, then press Enter" value={phone} onChange={e => setPhone(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && phone.length >= 3) findCustomer({ term: phone }) }} />
-          <button className="btn slim" disabled={busy || phone.length < 3} onClick={() => findCustomer({ term: phone })}>Search</button>
-        </div>
-        <div className="row" style={{ marginTop: 8 }}>
-          <input className="input grow" placeholder="Search name or phone" value={phone} onChange={e => setPhone(e.target.value)} />
           <button className="btn slim" disabled={busy || phone.length < 3} onClick={() => findCustomer({ term: phone })}>Search</button>
         </div>
         {results && <div style={{ marginTop: 10 }}>
@@ -275,6 +293,7 @@ export default function Staff() {
       <div className="tabs">
         <button className={tab === 'bill' ? 'on' : ''} onClick={() => setTab('bill')}>New bill</button>
         <button className={tab === 'topup' ? 'on' : ''} onClick={() => setTab('topup')}>Top-up</button>
+        <button className={tab === 'stamps' ? 'on' : ''} onClick={() => setTab('stamps')}>Stamps</button>
         <button className={tab === 'hist' ? 'on' : ''} onClick={() => setTab('hist')}>History</button>
         <button className={tab === 'addcust' ? 'on' : ''} onClick={() => setTab('addcust')}>Add customer</button>
       </div>
@@ -320,7 +339,8 @@ export default function Staff() {
         </div>}
 
         <label className="label">Pay from wallet (max {inr(maxWallet())})</label>
-        <input className="input" type="number" min="0" max={(maxWallet() / 100).toFixed(2)} step="0.01" value={walletAmt} onChange={e => { const n = parseFloat(e.target.value); setWalletAmt(e.target.value === '' || isNaN(n) ? '' : String(Math.min(n, maxWallet() / 100))) }} placeholder="0" />        <label className="label">Rest paid by</label>
+        <input className="input" type="number" min="0" max={(maxWallet() / 100).toFixed(2)} step="0.01" value={walletAmt} onChange={e => { const n = parseFloat(e.target.value); setWalletAmt(e.target.value === '' || isNaN(n) ? '' : String(Math.min(n, maxWallet() / 100))) }} placeholder="0" />
+        <label className="label">Rest paid by</label>
         <select className="select" value={payMethod} onChange={e => setPayMethod(e.target.value)}>
           <option value="cash">Cash</option><option value="card">Card</option>
           <option value="upi">UPI</option><option value="other">Other</option>
@@ -353,11 +373,36 @@ export default function Staff() {
         <button className="btn primary" disabled={busy} onClick={doTopup}>{busy ? 'Saving…' : 'Confirm top-up'}</button>
       </div>}
 
-           {tab === 'hist' && <div className="card">
+      {tab === 'stamps' && <div className="card">
+        <h2>Stamp cards</h2>
+        <p className="sm muted">Add stamps manually — for paper card migration or a missed scan. Every add is logged in History with your name.</p>
+        {rules.length === 0 && <p className="sm muted">No stamp rules configured yet — the admin adds them under Admin → Offers.</p>}
+        {rules.map(r => {
+          const p = prog.find(x => x.stamp_rule_id === r.id)
+          const earned = p?.stamps_earned || 0
+          const unl = Math.floor(earned / r.required_count) - (p?.rewards_redeemed || 0)
+          return <div key={r.id} style={{ padding: '10px 0', borderBottom: '1px solid #F1ECE1' }}>
+            <div className="spread sm"><b>{r.name}</b><span className="num">{earned % r.required_count} / {r.required_count}</span></div>
+            <div className="bar"><div style={{ width: ((earned % r.required_count) / r.required_count) * 100 + '%' }} /></div>
+            {unl > 0 && <span className="chip g" style={{ marginTop: 4 }}>{unl} reward ready</span>}
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="btn slim" disabled={busy} onClick={() => addStamps(r.id, 1)}>+1 stamp</button>
+              <input className="input" style={{ width: 70 }} type="number" min="1" placeholder="#" value={stampQty[r.id] || ''} onChange={e => setStampQty({ ...stampQty, [r.id]: e.target.value })} />
+              <button className="btn slim primary" disabled={busy} onClick={() => addStamps(r.id, stampQty[r.id])}>Add</button>
+            </div>
+          </div>
+        })}
+      </div>}
+
+      {tab === 'hist' && <div className="card">
         <h2>Recent activity</h2>
-        {orders.length === 0 && wtx.length === 0 && <p className="sm muted">Nothing yet for this customer.</p>}
+        {orders.length === 0 && wtx.length === 0 && stx.length === 0 && <p className="sm muted">Nothing yet for this customer.</p>}
         {wtx.filter(x => x.type === 'topup' || x.type === 'adjustment').map(x => <div key={x.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
           <span><b className="num">{x.amount_paise > 0 ? '+' : ''}{inr(x.amount_paise)}</b> <span className="muted">{x.type === 'topup' ? 'top-up' + (x.bonus_paise ? ' (bonus ' + inr(x.bonus_paise) + ')' : '') : 'adjustment'}</span>{x.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {x.created_by_name}</span>}</span>
+          <span className="muted xs">{fmtDate(x.created_at)}</span>
+        </div>)}
+        {stx.map(x => <div key={x.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
+          <span><b className="num">{x.reward_redeemed ? '🎁' : '+' + x.stamps_awarded}</b> <span className="muted">{x.reward_redeemed ? 'reward redeemed' : 'stamp' + (x.stamps_awarded > 1 ? 's' : '')} · {x.stamp_rules?.name}</span>{x.note && !x.reward_redeemed && <span className="xs muted"> ({x.note})</span>}{x.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {x.created_by_name}</span>}</span>
           <span className="muted xs">{fmtDate(x.created_at)}</span>
         </div>)}
         {orders.map(o => <div key={o.id} style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
@@ -388,7 +433,13 @@ export default function Staff() {
 
     {result && <div className="overlay" onClick={() => setResult(null)}>
       <div className="modal" onClick={e => e.stopPropagation()}>
-        {result.kind === 'topup'
+        {result.kind === 'stamps'
+          ? <>
+              <h2>Stamps added</h2>
+              <p>Card total: <b className="num">{result.total}</b> stamps</p>
+              {result.unlocked > 0 && <div className="ok sm" style={{ marginTop: 8 }}>{result.unlocked} reward ready — apply it on the next bill.</div>}
+            </>
+          : result.kind === 'topup'
           ? <>
               <h2>Top-up done</h2>
               <p>Added <b className="num">{inr(result.balance_after - result.bonus_paise)}</b></p>
