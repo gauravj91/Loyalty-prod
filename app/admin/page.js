@@ -2,8 +2,7 @@
 import { useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { supabase } from '../../lib/supabase'
-import { inr, toPaise, fmtDate, dayStart, tierFor, errMsg, customerLink, downloadCsv } from '../../lib/helpers'
-
+import { inr, toPaise, fmtDate, dayStart, tierFor, errMsg, customerLink, downloadCsv, staffEmail } from '../../lib/helpers'
 const S = ({ title, children, open }) => (
   <details className="sec" open={open}><summary>{title}</summary><div style={{ paddingTop: 10 }}>{children}</div></details>
 )
@@ -53,8 +52,7 @@ export default function Admin() {
   const [rules, setRules] = useState([]); const [ruleF, setRuleF] = useState({ name: '', target_type: 'item', target_value: '', required_count: '10', reward_type: 'free_item', reward_value: '1', reward_label: '' })
   const [pc, setPc] = useState(null); const [pcF, setPcF] = useState({ per100: '1', active: true, b0: '0', b1: '500', b2: '1000', b3: '2500' })
   const [rws, setRws] = useState([]); const [rwF, setRwF] = useState({ name: '', description: '', required_points: '500', value: '250', max: '1' })
-  const [staff, setStaff] = useState([]); const [stF, setStF] = useState({ email: '', role: 'staff', name: '', phone: '', pw: '' })  const [q, setQ] = useState(''); const [custs, setCusts] = useState([]); const [sel, setSel] = useState(null)
-  const [adjF, setAdjF] = useState({ amount: '', reason: '' }); const [link, setLink] = useState(null)
+  const [staff, setStaff] = useState([]); const [stF, setStF] = useState({ email: '', role: 'staff', name: '', phone: '', pw: '' })  const [adjF, setAdjF] = useState({ amount: '', reason: '' }); const [link, setLink] = useState(null)
   const [outs, setOuts] = useState([]); const [outF, setOutF] = useState({ name: '', address: '', phone: '' })
   const [campSeg, setCampSeg] = useState('all'); const [campPts, setCampPts] = useState(100)
   const [campMsg, setCampMsg] = useState('Hi {name}! We miss you — visit us this week and treat yourself.'); const [campList, setCampList] = useState(null)
@@ -216,7 +214,7 @@ export default function Admin() {
     setClaims(new Set((bc.data || []).map(x => x.customer_id)))
     setFbList(fb.data || [])
     const rows = (cs.data || []).map(c => ({ ...c, _b: c.birth_date ? new Date(c.birth_date + 'T00:00:00') : null, _a: c.anniversary_date ? new Date(c.anniversary_date + 'T00:00:00') : null }))
-    setBdays(rows.filter(c => c._b && c._b.getMonth() === m).sort((a, b) => a._b.getDate() - b._b.getDate()))
+    setAnnivs(rows.filter(c => c._a && c._a.getMonth() === m).sort((a, b) => a._a.getDate() - b._a.getDate()))
     setAnnivs(rows.filter(c => c._a && c._a.getMonth() === m).sort((a, b) => a._a.getDate() - b._a.getDate()))
   }
 
@@ -374,8 +372,8 @@ export default function Admin() {
     const { error } = await supabase.rpc('add_staff', {
       p_restaurant_id: rest.id, p_email: stF.email, p_role: stF.role, p_name: stF.name || null,
     })
-    error ? setErr(errMsg(error)) : flash('Staff added'); setStF({ email: '', role: 'staff', name: '', phone: '', pw: '' }); loadStaff()  }
-  async function updStaff(id, vals) { await supabase.from('restaurant_users').update(vals).eq('id', id); loadStaff() }
+    error ? setErr(errMsg(error)) : flash('Staff added'); setStF({ email: '', role: 'staff', name: '', phone: '', pw: '' }); loadStaff()
+    async function updStaff(id, vals) { await supabase.from('restaurant_users').update(vals).eq('id', id); loadStaff() }
 
   async function searchCusts(s) {
     setQ(s)
@@ -860,7 +858,7 @@ export default function Admin() {
           <button className="chip" style={{ cursor: 'pointer' }} onClick={() => updStaff(s.id, { status: s.status === 'active' ? 'inactive' : 'active' })}>{s.status === 'active' ? 'Deactivate' : 'Activate'}</button>
         </span>
       </div>)}
-            <h3 style={{ marginTop: 14 }}>Add a team member</h3>
+             <h3 style={{ marginTop: 14 }}>Add a team member</h3>
       <p className="xs muted">Creates their login instantly — nothing to sign up on their side. They sign in with their phone number and the password you set, and can change it anytime from the Staff portal.</p>
       <div className="row" style={{ marginTop: 8 }}>
         <input className="input grow" placeholder="Full name" value={stF.name} onChange={e => setStF({ ...stF, name: e.target.value })} />
