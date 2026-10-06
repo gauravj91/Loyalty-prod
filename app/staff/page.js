@@ -228,7 +228,13 @@ export default function Staff() {
     setResult({ kind: 'bday', amount: data.amount_paise, balance: data.balance_after })
     loadCustomer(cust)
   }
-
+  async function changePw() {
+    const p = prompt('Choose a new password (at least 8 characters)')
+    if (!p) return
+    if (p.length < 8) { alert('Password must be at least 8 characters.'); return }
+    const { error } = await supabase.auth.updateUser({ password: p })
+    alert(error ? errMsg(error) : 'Password updated.')
+  }
   async function addCustomer() {
     if (!nc.name || nc.name.trim().length < 2) return setErr('Enter the customer name.')
     if (!nc.phone || nc.phone.trim().length < 8) return setErr('Enter a valid phone number.')
@@ -264,7 +270,8 @@ export default function Staff() {
         <h1>{rest.name}</h1>
       </span>
       <span className="row">
-        {me && me.role !== 'staff' && <button className="btn slim" onClick={() => { window.location.href = '/admin' }}>Admin view</button>}
+                {me && me.role !== 'staff' && <button className="btn slim" onClick={() => { window.location.href = '/admin' }}>Admin view</button>}
+        <button className="btn slim" onClick={changePw}>Password</button>
         <button className="btn slim" onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}>Log out</button>
       </span>
     </div>
