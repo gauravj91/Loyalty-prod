@@ -19,7 +19,7 @@ export default function Staff() {
   const [results, setResults] = useState(null)
   const [orders, setOrders] = useState([]); const [wtx, setWtx] = useState([]); const [stx, setStx] = useState([])
   const [rules, setRules] = useState([]); const [stampQty, setStampQty] = useState({})
-  const [items, setItems] = useState([])
+  const [items, setItems] = useState([]); const [quickMode, setQuickMode] = useState(false); const [quickAmt, setQuickAmt] = useState('') 
   const [f, setF] = useState({ name: '', category: '', qty: '1', price: '' })
   const [walletAmt, setWalletAmt] = useState(''); const [payMethod, setPayMethod] = useState('cash')
   const [rewardSel, setRewardSel] = useState(null); const [stampSel, setStampSel] = useState(null)
@@ -115,6 +115,12 @@ export default function Staff() {
       return [...xs, { name, category: f.category.trim(), qty, unit_price_paise: price, cost_paise: null, free: false }]
     })
     setF({ name: '', category: '', qty: '1', price: '' }); setErr('')
+  }
+    function setQuickTotal() {
+    const amt = toPaise(quickAmt)
+    if (amt <= 0) return setErr('Enter the bill total.')
+    setItems([{ name: 'Bill total', category: 'Quick entry', qty: 1, unit_price_paise: amt, cost_paise: null, free: false }])
+    setErr('')
   }
   const subtotal = () => items.reduce((s, i) => s + i.qty * i.unit_price_paise, 0)
   function estDiscount() {
@@ -345,8 +351,18 @@ export default function Staff() {
             {rewardSel === r.id ? 'Selected ✓' : 'Apply'}
           </button>
         </div>)}
-
-        {menu.length > 0 && menuCats.map(cat => <div key={cat}>
+        <div className="tabs" style={{ marginBottom: 10 }}>
+          <button className={quickMode ? '' : 'on'} onClick={() => setQuickMode(false)}>Add items</button>
+          <button className={quickMode ? 'on' : ''} onClick={() => setQuickMode(true)}>Quick total</button>
+        </div>
+        {quickMode && <div className="card" style={{ background: '#F8F4EC', marginBottom: 10 }}>
+          <p className="sm muted" style={{ marginTop: 0 }}>Big bill? Enter just the total — points, wallet and rewards all work the same. (Stamps need items added individually.)</p>
+          <div className="row">
+            <input className="input grow" type="number" min="0" step="0.01" placeholder="Total bill ₹" value={quickAmt} onChange={e => setQuickAmt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') setQuickTotal() }} />
+            <button className="btn slim primary" onClick={setQuickTotal}>Set total</button>
+          </div>
+        </div>}
+        {menu.length > 0 && !quickMode && menuCats.map(cat => <div key={cat}>
           <div className="xs muted" style={{ margin: '10px 0 4px' }}>{cat.toUpperCase()}</div>
           <div className="row" style={{ flexWrap: 'wrap' }}>
             {menu.filter(m => (m.category || 'Other') === cat).map(m =>
