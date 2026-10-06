@@ -6,6 +6,8 @@ import { inr, fmtDate, tierFor, nextTierFor, errMsg } from '../../lib/helpers'
 
 const LS = 'tessera_customer'
 
+const Lock = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ verticalAlign: '-1px', marginLeft: 4 }}><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+
 export default function CustomerPortal() {
   const [status, setStatus] = useState('loading')
   const [err, setErr] = useState('')
@@ -15,6 +17,7 @@ export default function CustomerPortal() {
   const [rules, setRules] = useState([]); const [prog, setProg] = useState([])
   const [cfg, setCfg] = useState(null); const [rewards, setRewards] = useState([]); const [reds, setReds] = useState([])
   const [txns, setTxns] = useState([]); const [orders, setOrders] = useState([]); const [stx, setStx] = useState([])
+  const [visits, setVisits] = useState(0)
   const [open, setOpen] = useState(null); const [showQr, setShowQr] = useState(false)
   const [invite, setInvite] = useState(null)
   const [fbFor, setFbFor] = useState(null); const [fbStars, setFbStars] = useState(0)
@@ -46,25 +49,27 @@ export default function CustomerPortal() {
   }
 
   async function load(cid) {
-    const c = await supabase.from('customers').select('*, restaurants(name)').eq('id', cid).single()
+    const c = await supabase.from('customers').select('*, restaurants(name, logo_url, cover_url, rewards_terms)').eq('id', cid).single()
     if (c.error) throw c.error
     setCust(c.data)
     const rid = c.data.restaurant_id
-    const [ru, pr, cf, rw, rd, tx, or, mkq, mdq, st] = await Promise.all([
+    const [ru, pr, cf, rw, rd, tx, or, mkq, mdq, st, vc] = await Promise.all([
       supabase.from('stamp_rules').select('*').eq('restaurant_id', rid).eq('active', true),
       supabase.from('customer_stamp_progress').select('*').eq('customer_id', cid),
       supabase.from('points_config').select('*').eq('restaurant_id', rid).maybeSingle(),
-      supabase.from('rewards').select('*').eq('restaurant_id', rid).eq('active', true),
+      supabase.from('rewards').select('*').eq('restaurant_id', rid).eq('active', true).order('required_points'),
       supabase.from('reward_redemptions').select('reward_id').eq('customer_id', cid),
       supabase.from('wallet_transactions').select('*').eq('customer_id', cid).order('created_at', { ascending: false }).limit(15),
       supabase.from('orders').select('*').eq('customer_id', cid).order('created_at', { ascending: false }).limit(10),
       supabase.from('marketing_config').select('*').eq('restaurant_id', rid).maybeSingle(),
       supabase.from('modules_config').select('*').eq('restaurant_id', rid).maybeSingle(),
       supabase.from('stamp_transactions').select('*, stamp_rules(name)').eq('customer_id', cid).order('created_at', { ascending: false }).limit(10),
+      supabase.from('orders').select('id', { count: 'exact', head: true }).eq('customer_id', cid),
     ])
     setRules(ru.data || []); setProg(pr.data || []); setCfg(cf.data)
     setRewards(rw.data || []); setReds(rd.data || [])
     setTxns(tx.data || []); setOrders(or.data || []); setStx(st.data || [])
+    setVisits(vc.count || 0)
     setMk(mkq.data || null)
     if (mdq.data) setMods(mdq.data)
     setStatus('ready')
@@ -110,8 +115,13 @@ export default function CustomerPortal() {
   </div>
 
   const t = mods.points_on ? tierFor(cust.lifetime_points, cfg?.tiers) : null
-  const nt = mods.points_on ? nextTierFor(cust.lifetime_points, cfg?.tiers) : null
-  const ready = mods.points_on ? rewards.filter(r => cust.points_balance >= r.required_points && (r.max_per_customer === 0 || reds.filter(x => x.reward_id === r.id).length < r.max_per_customer)) : []
+  const ppr = cfg?.points_per_rupee || 0
+  const earnPts = ppr > 0 ? Math.round(ppr * 100 * 10) / 10 : 0
+  const canClaim = mods.points_on ? rewards.filter(r => cust.points_balance >= r.required_points) : []
+  const next = mods.points_on ? rewards.filter(r => r.required_points > cust.points_balance)[0] : null
+  const nextRupees = next && ppr > 0 ? Math.ceil((next.required_points - cust.points_balance) / ppr) : null
+  const nextPct = next ? Math.min(100, Math.round(cust.points_balance / next.required_points * 100)) : 0
+  const rest_ = cust.restaurants || {}
   const activity = [
     ...orders.map(o => ({ at: o.created_at, kind: 'order', o })),
     ...txns.filter(x => x.type === 'topup' || x.type === 'adjustment').map(x => ({ at: x.created_at, kind: 'wallet', x })),
@@ -119,34 +129,74 @@ export default function CustomerPortal() {
   ].sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 12)
   const inviteLink = (typeof window !== 'undefined' ? window.location.origin : '') + '/customer?slug=' + slug + '&ref=' + cust.referral_code
   const shareTxt = (mk && mk.referrer_paise > 0
-    ? 'Join ' + (cust.restaurants?.name || 'this restaurant') + ' with my code ' + cust.referral_code + ' — we both get ' + inr(mk.referrer_paise) + ' in wallet credit. Open this link and show the code at the counter: ' + inviteLink
-    : 'Join ' + (cust.restaurants?.name || 'this restaurant') + ' with my code ' + cust.referral_code + '. Open this link and show the code at the counter: ' + inviteLink)
+    ? 'Join ' + (rest_.name || 'this restaurant') + ' with my code ' + cust.referral_code + ' — we both get ' + inr(mk.referrer_paise) + ' in wallet credit. Open this link and show the code at the counter: ' + inviteLink
+    : 'Join ' + (rest_.name || 'this restaurant') + ' with my code ' + cust.referral_code + '. Open this link and show the code at the counter: ' + inviteLink)
 
-  return <div className="wrap">
-    <div className="spread" style={{ marginBottom: 16 }}>
-      <div>
-        <div style={{ fontWeight: 800, fontSize: 20, color: '#C2511F' }}>{cust.restaurants?.name || 'Loyalty'}</div>
-        <div className="muted sm">Hi {cust.name || 'there'}</div>
+  return <div className="wrap" style={{ paddingBottom: 90 }}>
+    <div style={{ background: 'linear-gradient(135deg,#C2511F,#E07A4A)', margin: '-20px -16px 0', padding: '22px 16px 46px', color: '#fff', borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}>
+      <div className="spread">
+        <span className="sm" style={{ fontWeight: 800, opacity: .9 }}>{rest_.name}</span>
+        <button className="btn slim" style={{ width: 'auto', background: 'rgba(255,255,255,.18)', color: '#fff', borderColor: 'transparent' }} onClick={logout}>Log out</button>
       </div>
-      <button className="btn slim" onClick={logout}>Log out</button>
+      <div style={{ fontSize: 27, fontWeight: 800, marginTop: 12, letterSpacing: '-.02em' }}>Hello {cust.name || 'there'}</div>
+      {mods.points_on && <div style={{ marginTop: 6, fontSize: 15.5 }}>
+        You have <b className="num" style={{ fontSize: 19 }}>{cust.points_balance}</b> points
+        {t && <span className="chip" style={{ marginLeft: 8, background: 'rgba(255,255,255,.2)', color: '#fff' }}>{t.name}</span>}
+      </div>}
+      {mods.wallet_on && <div className="sm num" style={{ marginTop: 3, opacity: .95 }}>Wallet balance {inr(cust.wallet_balance_paise)}</div>}
+      {canClaim.length > 0 && <div className="chip" style={{ marginTop: 10, background: '#fff', color: '#3E6B4F' }}>{canClaim.length} reward{canClaim.length > 1 ? 's' : ''} unlocked — claim at the counter</div>}
     </div>
-    {err && <div className="err sm">{err}</div>}
 
-    {mods.wallet_on && <div className="card">
-      <div className="xs muted">WALLET BALANCE</div>
-      <div className="big num">{inr(cust.wallet_balance_paise)}</div>
-      <div className="xs muted" style={{ marginTop: 6 }}>Show your QR at the counter to pay from this balance.</div>
+    <div className="card" style={{ padding: 0, overflow: 'hidden', marginTop: -30, position: 'relative' }}>
+      <div style={{ height: 120, background: rest_.cover_url ? 'url(' + rest_.cover_url + ') center/cover' : 'linear-gradient(135deg,#221D16,#6B5138)' }} />
+      <div style={{ padding: '0 16px 16px' }}>
+        <div style={{ width: 76, height: 76, borderRadius: '50%', border: '4px solid #fff', background: '#fff', marginTop: -40, boxShadow: '0 2px 10px rgba(34,29,22,.18)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {rest_.logo_url
+            ? <img src={rest_.logo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            : <span style={{ fontWeight: 800, fontSize: 26, color: '#C2511F' }}>{(rest_.name || 'R')[0]}</span>}
+        </div>
+        <h2 style={{ fontSize: 21, marginTop: 8 }}>{rest_.name}</h2>
+        <div className="sm muted">Get rewarded on every visit</div>
+        <div className="row" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+          {earnPts > 0 && <span className="chip a">₹100 spent = {earnPts} points</span>}
+          <span className="chip">{visits} visit{visits === 1 ? '' : 's'} with us</span>
+        </div>
+      </div>
+    </div>
+
+    {mods.points_on && rewards.length > 0 && <div className="card" style={{ background: '#221D16', borderColor: '#221D16', color: '#fff', marginTop: 14 }}>
+      <h2 style={{ color: '#fff' }}>Loyalty rewards</h2>
+      {next && <div style={{ marginTop: 10 }}>
+        <div className="sm" style={{ opacity: .95 }}>
+          {nextPct >= 60 ? 'Almost there! ' : ''}Spend <b className="num">{inr(nextRupees * 100)}</b> more to unlock <b>{next.name}</b>
+        </div>
+        <div className="bar" style={{ background: 'rgba(255,255,255,.14)', marginTop: 8 }}>
+          <div style={{ width: nextPct + '%', background: 'linear-gradient(90deg,#E07A4A,#F0A57E)', transition: 'width .6s' }} />
+        </div>
+      </div>}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
+        {rewards.map(r => {
+          const has = cust.points_balance >= r.required_points
+          return <div key={r.id} style={{ background: has ? 'rgba(224,122,74,.16)' : 'rgba(255,255,255,.06)', border: has ? '1.5px solid #E07A4A' : '1px solid rgba(255,255,255,.14)', borderRadius: 14, padding: 12 }}>
+            <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: '-.01em' }}>
+              {r.required_points}<span style={{ fontSize: 10.5, fontWeight: 800, opacity: .75, marginLeft: 4 }}>PTS</span>
+              {!has && <Lock />}
+            </div>
+            <div style={{ fontWeight: 700, marginTop: 4, fontSize: 13.5 }}>{r.name}</div>
+            {r.description && <div className="xs" style={{ opacity: has ? .85 : .6, marginTop: 2 }}>{r.description}</div>}
+            {has && <div className="xs" style={{ color: '#F0A57E', fontWeight: 800, marginTop: 6 }}>Ready — ask at the counter</div>}
+          </div>
+        })}
+      </div>
+      {rest_.rewards_terms && <details style={{ marginTop: 16 }}>
+        <summary className="sm" style={{ fontWeight: 800 }}>Terms &amp; Conditions</summary>
+        <div className="xs" style={{ opacity: .8, whiteSpace: 'pre-wrap', marginTop: 8, border: '1px dashed rgba(255,255,255,.3)', borderRadius: 10, padding: 10 }}>{rest_.rewards_terms}</div>
+      </details>}
     </div>}
 
-    {mods.points_on && <div className="card">
-      <div className="spread">
-        <div><div className="xs muted">POINTS</div><div className="big num">{cust.points_balance}</div></div>
-        <span className={'chip t-' + (t?.name || 'Bronze')}>{t?.name || 'Bronze'}</span>
-      </div>
-      {nt && <div className="sm muted" style={{ marginTop: 6 }}>{nt.min - cust.lifetime_points} more points to reach <b>{nt.name}</b></div>}
-      {ready.length > 0 && <div style={{ marginTop: 12 }}>
-        {ready.map(r => <div key={r.id} className="chip g" style={{ margin: '2px 4px 2px 0' }}>You can claim: {r.name}</div>)}
-      </div>}
+    {mods.points_on && rewards.length > 0 && <div className="card" style={{ background: '#F1ECE1' }}>
+      <h3>How to redeem?</h3>
+      <p className="sm muted" style={{ marginTop: 4 }}>Show your QR code at the counter and tell our team which reward you'd like. They'll apply it to your bill on the spot.</p>
     </div>}
 
     {mods.stamps_on && rules.length > 0 && <div className="card">
@@ -157,7 +207,7 @@ export default function CustomerPortal() {
         const unl = Math.floor(earned / r.required_count) - (p?.rewards_redeemed || 0)
         return <div key={r.id} style={{ marginTop: 10 }}>
           <div className="spread sm"><b>{r.name}</b><span className="num">{earned % r.required_count} / {r.required_count}</span></div>
-          <div className="bar"><div style={{ width: ((earned % r.required_count) / r.required_count) * 100 + '%' }} /></div>
+          <div className="bar"><div style={{ width: ((earned % r.required_count) / r.required_count) * 100 + '%', transition: 'width .6s' }} /></div>
           {unl > 0 && <div className="chip g" style={{ marginTop: 6 }}>{unl} free reward ready — ask at the counter</div>}
         </div>
       })}
