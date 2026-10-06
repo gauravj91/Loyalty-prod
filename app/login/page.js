@@ -18,11 +18,11 @@ export default function Login() {
     if (ru?.length) return r.replace(ru[0].role === 'staff' ? '/staff' : '/admin')
     const { data: pa } = await supabase.from('platform_admins').select('user_id').eq('user_id', user.id)
     if (pa?.length) return r.replace('/super')
-    setMsg('No restaurant linked to this account. Owners: create yours below. Staff: ask your manager to add your email under Admin > Staff.')
+    setMsg('No restaurant linked to this account. Owners: create yours below. Staff: your manager can create your login under Admin → Staff.')
     setMode('create')
   }
 
-    async function signIn(e) {
+  async function signIn(e) {
     e.preventDefault(); setBusy(true); setErr(''); setMsg('')
     const digits = email.replace(/\D/g, '').replace(/^0+/, '')
     const loginEmail = (!email.includes('@') && digits.length === 10) ? staffEmail(digits) : email.trim()
@@ -43,7 +43,7 @@ export default function Login() {
     const { error } = await supabase.auth.signUp({ email, password: pw })
     setBusy(false)
     if (error) return setErr(errMsg(error))
-    setMsg('Login created. Now ask your manager to add "' + email + '" under Admin > Staff, then sign in.')
+    setMsg('Login created. Now ask your manager to add you under Admin → Staff, then sign in.')
     setMode('in')
   }
   async function createResto(e) {
@@ -67,7 +67,7 @@ export default function Login() {
       </div>
       {err && <div className="err sm">{err}</div>}
       {msg && <div className="ok sm">{msg}</div>}
-            {mode === 'in' && <form onSubmit={signIn}>
+      {mode === 'in' && <form onSubmit={signIn}>
         <label className="label">Email or phone (staff)</label>
         <input className="input" type="text" value={email} onChange={e => setEmail(e.target.value)} required />
         <label className="label">Password</label>
