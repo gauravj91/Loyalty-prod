@@ -19,7 +19,7 @@ export default function Staff() {
   const [results, setResults] = useState(null)
   const [orders, setOrders] = useState([]); const [wtx, setWtx] = useState([]); const [stx, setStx] = useState([])
   const [rules, setRules] = useState([]); const [stampQty, setStampQty] = useState({})
-  const [items, setItems] = useState([]); const [quickMode, setQuickMode] = useState(false); const [quickAmt, setQuickAmt] = useState('') 
+  const [items, setItems] = useState([]); const [quickMode, setQuickMode] = useState(false); const [quickAmt, setQuickAmt] = useState('')
   const [f, setF] = useState({ name: '', category: '', qty: '1', price: '' })
   const [walletAmt, setWalletAmt] = useState(''); const [payMethod, setPayMethod] = useState('cash')
   const [rewardSel, setRewardSel] = useState(null); const [stampSel, setStampSel] = useState(null)
@@ -96,6 +96,13 @@ export default function Staff() {
     loadCustomer(data[0])
   }
 
+  function setQuickTotal() {
+    const amt = toPaise(quickAmt)
+    if (amt <= 0) return setErr('Enter the bill total.')
+    setItems([{ name: 'Bill total', category: 'Quick entry', qty: 1, unit_price_paise: amt, cost_paise: null, free: false }])
+    setErr('')
+  }
+
   function addMenu(m) {
     setItems(xs => {
       const i = xs.findIndex(x => x.name === m.name && !x.free)
@@ -115,12 +122,6 @@ export default function Staff() {
       return [...xs, { name, category: f.category.trim(), qty, unit_price_paise: price, cost_paise: null, free: false }]
     })
     setF({ name: '', category: '', qty: '1', price: '' }); setErr('')
-  }
-    function setQuickTotal() {
-    const amt = toPaise(quickAmt)
-    if (amt <= 0) return setErr('Enter the bill total.')
-    setItems([{ name: 'Bill total', category: 'Quick entry', qty: 1, unit_price_paise: amt, cost_paise: null, free: false }])
-    setErr('')
   }
   const subtotal = () => items.reduce((s, i) => s + i.qty * i.unit_price_paise, 0)
   function estDiscount() {
@@ -228,6 +229,7 @@ export default function Staff() {
     setResult({ kind: 'bday', amount: data.amount_paise, balance: data.balance_after })
     loadCustomer(cust)
   }
+
   async function changePw() {
     const p = prompt('Choose a new password (at least 8 characters)')
     if (!p) return
@@ -235,6 +237,7 @@ export default function Staff() {
     const { error } = await supabase.auth.updateUser({ password: p })
     alert(error ? errMsg(error) : 'Password updated.')
   }
+
   async function addCustomer() {
     if (!nc.name || nc.name.trim().length < 2) return setErr('Enter the customer name.')
     if (!nc.phone || nc.phone.trim().length < 8) return setErr('Enter a valid phone number.')
@@ -247,8 +250,9 @@ export default function Staff() {
     setBusy(false)
     if (error) return setErr(errMsg(error))
     setLink({ url: customerLink(rest.slug, data.qr_code, data.qr_secret) })
+    const ph = nc.phone
     setNc({ name: '', phone: '', birth: '', anniv: '', ref: '' })
-    findCustomer({ term: nc.phone })
+    findCustomer({ term: ph })
   }
 
   if (phase === 'loading') return <div className="wrap"><p className="muted">Loading…</p></div>
@@ -270,7 +274,7 @@ export default function Staff() {
         <h1>{rest.name}</h1>
       </span>
       <span className="row">
-                {me && me.role !== 'staff' && <button className="btn slim" onClick={() => { window.location.href = '/admin' }}>Admin view</button>}
+        {me && me.role !== 'staff' && <button className="btn slim" onClick={() => { window.location.href = '/admin' }}>Admin view</button>}
         <button className="btn slim" onClick={changePw}>Password</button>
         <button className="btn slim" onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}>Log out</button>
       </span>
@@ -303,7 +307,7 @@ export default function Staff() {
             <div style={{ fontWeight: 800, fontSize: 18 }}>{cust.name || 'Customer'}</div>
             <div className="muted sm num">{cust.phone}</div>
           </div>
-          <button className="btn slim" onClick={() => { setCust(null); setItems([]) }}>Change</button>
+          <button className="btn slim" onClick={() => { setCust(null); setItems([]); setQuickAmt('') }}>Change</button>
         </div>
         {isBday && <div className="ok sm" style={{ marginTop: 10 }}>
           Birthday today! {mods.wallet_on && mk && mk.birthday_paise > 0
@@ -349,7 +353,7 @@ export default function Staff() {
           <span className="chip g grow">{p.stamp_rules.reward_label || p.stamp_rules.name} — unlocked</span>
           <button className="btn slim" onClick={() => applyStamp(p)}>Apply</button>
         </div>)}
-                {affordable().map(r => <div key={r.id} className="row" style={{ marginBottom: 8 }}>
+        {affordable().map(r => <div key={r.id} className="row" style={{ marginBottom: 8 }}>
           <span className="chip a grow">{r.name} — {r.required_points} pts</span>
           <button className="btn slim" onClick={() => {
             setItems(xs => xs.some(x => x.free && x.name === r.name) ? xs : [...xs, { name: r.name, category: 'Reward', qty: 1, unit_price_paise: 0, cost_paise: null, free: true }])
@@ -358,6 +362,7 @@ export default function Staff() {
             {rewardSel === r.id ? 'Selected ✓' : 'Apply'}
           </button>
         </div>)}
+
         <div className="tabs" style={{ marginBottom: 10 }}>
           <button className={quickMode ? '' : 'on'} onClick={() => setQuickMode(false)}>Add items</button>
           <button className={quickMode ? 'on' : ''} onClick={() => setQuickMode(true)}>Quick total</button>
@@ -378,14 +383,14 @@ export default function Staff() {
               </button>)}
           </div>
         </div>)}
-        {menu.length === 0 && recent.length > 0 && <div className="row" style={{ flexWrap: 'wrap', marginBottom: 8 }}>
+        {!quickMode && menu.length === 0 && recent.length > 0 && <div className="row" style={{ flexWrap: 'wrap', marginBottom: 8 }}>
           {recent.map(it => <button key={it.name} className="chip" style={{ cursor: 'pointer' }} onClick={() => { setItems(xs => [...xs, { name: it.name, category: it.category || '', qty: 1, unit_price_paise: it.unit_price_paise, cost_paise: null, free: false }]); setErr('') }}>
             + {it.name} · {inr(it.unit_price_paise)}
           </button>)}
         </div>}
-        {menu.length === 0 && <p className="xs muted">No menu yet — the admin can build it under Admin, Menu. Custom items still work below.</p>}
+        {!quickMode && menu.length === 0 && <p className="xs muted">No menu yet — the admin can build it under Admin, Menu. Custom items still work below.</p>}
 
-        <details className="sec" style={{ marginTop: 10 }}>
+        {!quickMode && <details className="sec" style={{ marginTop: 10 }}>
           <summary className="sm">Custom item</summary>
           <div className="row" style={{ marginTop: 8 }}>
             <input className="input grow" placeholder="Item name" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
@@ -396,7 +401,7 @@ export default function Staff() {
             <input className="input grow" type="number" min="0" step="0.01" placeholder="Price ₹" value={f.price} onChange={e => setF({ ...f, price: e.target.value })} />
             <button className="btn slim primary" onClick={addItem}>Add</button>
           </div>
-        </details>
+        </details>}
 
         {items.length > 0 && <div style={{ marginTop: 12 }}>
           {items.map((it, i) => <div key={i} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
