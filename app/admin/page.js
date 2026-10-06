@@ -60,6 +60,7 @@ export default function Admin() {
   const [campSeg, setCampSeg] = useState('all'); const [campPts, setCampPts] = useState(100)
   const [campMsg, setCampMsg] = useState('Hi {name}! We miss you — visit us this week and treat yourself.'); const [campList, setCampList] = useState(null)
   const [campIdx, setCampIdx] = useState(0); const [sentIds, setSentIds] = useState([])
+  const [mods, setMods] = useState({ wallet_on: true, stamps_on: true, points_on: true }); const [modsF, setModsF] = useState({ wallet_on: true, stamps_on: true, points_on: true })
   const [menu, setMenu] = useState([]); const [miF, setMiF] = useState({ id: null, name: '', category: '', price: '', cost: '', active: true })
   const [mk, setMk] = useState(null); const [mkF, setMkF] = useState({ referrer: '100', referee: '100', birthday: '0' })
   const [bdays, setBdays] = useState([]); const [annivs, setAnnivs] = useState([]); const [claims, setClaims] = useState(new Set())
@@ -222,12 +223,14 @@ export default function Admin() {
 
   async function loadOffers() {
     const rid = rest.id
-    const [w, sr, p, rw] = await Promise.all([
+    const [w, sr, p, rw, md] = await Promise.all([
       supabase.from('wallet_schemes').select('*').eq('restaurant_id', rid).order('created_at', { ascending: false }).limit(1),
       supabase.from('stamp_rules').select('*').eq('restaurant_id', rid).order('created_at'),
       supabase.from('points_config').select('*').eq('restaurant_id', rid).maybeSingle(),
       supabase.from('rewards').select('*').eq('restaurant_id', rid).order('required_points'),
     ])
+    const mdq = await supabase.from('modules_config').select('*').eq('restaurant_id', rid).maybeSingle()
+    if (mdq.data) { setMods(mdq.data); setModsF({ wallet_on: mdq.data.wallet_on, stamps_on: mdq.data.stamps_on, points_on: mdq.data.points_on }) }
     if (w.data?.[0]) { setWs(w.data[0]); setWsF({ name: w.data[0].name, min: String(w.data[0].min_topup_paise / 100), bonus: String(w.data[0].bonus_pct), cap: w.data[0].bonus_cap_paise ? String(w.data[0].bonus_cap_paise / 100) : '' }) }
     setRules(sr.data || [])
     if (p.data) {
@@ -276,7 +279,12 @@ export default function Admin() {
     const { error } = await supabase.rpc('claim_birthday', { p_restaurant_id: rest.id, p_customer_id: c.id })
     error ? setErr(errMsg(error)) : flash('Birthday credit given'); loadMarketing()
   }
-
+  async function saveModules() {
+    const vals = { wallet_on: modsF.wallet_on, stamps_on: modsF.stamps_on, points_on: modsF.points_on }
+    const { error } = await supabase.from('modules_config').upsert({ ...vals, restaurant_id: rest.id }, { onConflict: 'restaurant_id' })
+    error ? setErr(errMsg(error)) : flash('Modules saved — staff and customer apps update on their next load')
+    setMods({ ...vals })
+  }
   async function delScheme() {
     if (!ws) return
     if (!confirm('Delete the wallet scheme? New top-ups will earn no bonus until you save a new one.')) return
@@ -453,15 +461,18 @@ export default function Admin() {
     </div>
 
     {tab === 'overview' && <>
-      {todo && <div className="card">
+            {todo && <div className="card">
         <h2>Today · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}</h2>
-        <div className="row" style={{ flexWrap: 'wrap', margin: '10px 0' }}>
-          <span className="chip">Yesterday: {inr(todo.ySales)} · {todo.yBills} bill(s)</span>
-          <span className="chip">Cash to reconcile: {inr(todo.yCash)}</span>
-        </div>
-        <p className="xs muted" style={{ marginTop: 0 }}>Daily habit: match that cash figure against the drawer before service starts.</p>
-        {todo.bdays.length > 0 && <>
-          <h3 style={{ marginTop: 14 }}>Birthdays — next 7 days ({todo.bdays.length})</h3>
+        <details className="sec" open>
+          <summary>Daily recap — yesterday {inr(todo.ySales)} · {todo.yBills} bill(s) · cash to reconcile {inr(todo.yCash)}</summary>
+          <div className="row" style={{ flexWrap: 'wrap', margin: '10px 0' }}>
+            <span className="chip">Yesterday: {inr(todo.ySales)} · {todo.yBills} bill(s)</span>
+            <span className="chip">Cash to reconcile: {inr(todo.yCash)}</span>
+          </div>
+          <p className="xs muted" style={{ marginTop: 0 }}>Daily habit: match that cash figure against the drawer before service starts.</p>
+        </details>
+        {todo.bdays.length > 0 && <details className="sec">
+          <summary>Birthdays — next 7 days ({todo.bdays.length})</summary>
           {todo.bdays.map(c => <div key={c.id} className="spread" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1', gap: 8 }}>
             <span className="grow"><b>{c.name || 'Customer'}</b> {c.today && <span className="chip a">TODAY</span>} <span className="muted xs">{c._o.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span></span>
             <span className="row">
@@ -469,6 +480,36 @@ export default function Admin() {
               {mk && mk.birthday_paise > 0 && <button className="btn slim primary" onClick={() => creditBday(c)}>Credit {inr(mk.birthday_paise)}</button>}
             </span>
           </div>)}
+        </details>}
+        {todo.annivs.length > 0 && <details className="sec">
+          <summary>Anniversaries — next 7 days ({todo.annivs.length})</summary>
+          {todo.annivs.map(c => <div key={c.id} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
+            <span><b>{c.name || 'Customer'}</b> <span className="muted xs">{c._o.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span></span>
+            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/' + waNum(c.phone) + '?text=' + encodeURIComponent('Happy anniversary, ' + (c.name || 'friend') + '! Celebrate with us at ' + rest.name + ' this week?')}>Wish</a>
+          </div>)}
+        </details>}
+        {todo.bad.length > 0 && <details className="sec">
+          <summary>Low ratings to recover ({todo.bad.length})</summary>
+          {todo.bad.map(f => <div key={f.created_at + (f.order_id || '')} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
+            <span><b style={{ color: '#B23A2E' }}>{'★'.repeat(f.stars)}</b> <span className="muted">{f.customers?.name || 'Guest'}</span></span>
+            <span className="xs muted">{fmtDate(f.created_at)}</span>
+          </div>)}
+          <p className="xs muted">Reach out within 24 hours — a recovered unhappy guest becomes the most loyal one. Find their number under Customers.</p>
+        </details>}
+        {todo.noFb.length > 0 && <details className="sec">
+          <summary>Feedback not yet asked ({todo.noFb.length})</summary>
+          {todo.noFb.map(o => <div key={o.id} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
+            <span><b>{o.customers?.name || 'Guest'}</b> <span className="muted num">{inr(o.total_paise)}</span> <span className="muted xs">{fmtDate(o.created_at)}</span></span>
+            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/?text=' + encodeURIComponent('Thank you for visiting ' + rest.name + '! How was everything today? Rate your visit: ' + window.location.origin + '/customer?slug=' + rest.slug + '&qr=' + (todo.cMap[o.customer_id]?.qr_code || '') + '&k=' + (todo.cMap[o.customer_id]?.qr_secret || '') + '&fb=' + o.id)}>Ask</a>
+          </div>)}
+        </details>}
+        {todo.idle > 0 && <div className="spread" style={{ marginTop: 14 }}>
+          <span className="sm"><b>{todo.idle}</b> customer(s) haven't visited in 14+ days</span>
+          <button className="btn slim primary" onClick={() => { setCampSeg('idle14'); setTab('campaigns') }}>Start win-back</button>
+        </div>}
+        {todo.bdays.length === 0 && todo.annivs.length === 0 && todo.bad.length === 0 && todo.noFb.length === 0 && todo.idle === 0
+          && <p className="sm muted" style={{ marginTop: 10 }}>All clear — nothing needs your attention today.</p>}
+      </div>}
         </>}
         {todo.annivs.length > 0 && <>
           <h3 style={{ marginTop: 14 }}>Anniversaries — next 7 days ({todo.annivs.length})</h3>
@@ -732,6 +773,13 @@ export default function Admin() {
     </div>}
 
     {tab === 'offers' && <div className="card">
+            <S title="Modules — show or hide wallet, stamps, points" open>
+        <p className="xs muted">Switch a module off and it disappears from the staff and customer apps (history is kept). Affects new transactions only in the UI.</p>
+        <label className="spread sm" style={{ padding: '6px 0', cursor: 'pointer' }}><span><b>Wallet & top-ups</b></span><input type="checkbox" checked={modsF.wallet_on} onChange={e => setModsF({ ...modsF, wallet_on: e.target.checked })} /></label>
+        <label className="spread sm" style={{ padding: '6px 0', cursor: 'pointer' }}><span><b>Stamp cards</b></span><input type="checkbox" checked={modsF.stamps_on} onChange={e => setModsF({ ...modsF, stamps_on: e.target.checked })} /></label>
+        <label className="spread sm" style={{ padding: '6px 0', cursor: 'pointer' }}><span><b>Points & tiers</b></span><input type="checkbox" checked={modsF.points_on} onChange={e => setModsF({ ...modsF, points_on: e.target.checked })} /></label>
+        <div style={{ height: 10 }} /><button className="btn primary" onClick={saveModules}>Save modules</button>
+      </S>
       <S title="Wallet scheme" open>
         <div className="row"><div className="grow"><label className="label">Name</label><input className="input" value={wsF.name} onChange={e => setWsF({ ...wsF, name: e.target.value })} /></div>
           <div style={{ width: 110 }}><label className="label">Min top-up ₹</label><input className="input" type="number" value={wsF.min} onChange={e => setWsF({ ...wsF, min: e.target.value })} /></div></div>
