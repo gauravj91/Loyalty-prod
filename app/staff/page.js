@@ -119,7 +119,6 @@ export default function Staff() {
   const subtotal = () => items.reduce((s, i) => s + i.qty * i.unit_price_paise, 0)
   function estDiscount() {
     let d = 0
-    if (mods.points_on && rewardSel) { const r = rewards.find(x => x.id === rewardSel); if (r) d += Math.min(r.value_paise, subtotal()) }
     if (mods.stamps_on && stampSel) {
       const p = prog.find(x => x.stamp_rule_id === stampSel)
       if (p && p.stamp_rules.reward_type === 'percent_discount') d += Math.floor(subtotal() * p.stamp_rules.reward_value / 100)
@@ -337,10 +336,13 @@ export default function Staff() {
           <span className="chip g grow">{p.stamp_rules.reward_label || p.stamp_rules.name} — unlocked</span>
           <button className="btn slim" onClick={() => applyStamp(p)}>Apply</button>
         </div>)}
-        {affordable().map(r => <div key={r.id} className="row" style={{ marginBottom: 8 }}>
+                {affordable().map(r => <div key={r.id} className="row" style={{ marginBottom: 8 }}>
           <span className="chip a grow">{r.name} — {r.required_points} pts</span>
-          <button className="btn slim" onClick={() => { setRewardSel(r.id); setStampSel(null) }}>
-            {rewardSel === r.id ? 'Selected' : 'Apply'}
+          <button className="btn slim" onClick={() => {
+            setItems(xs => xs.some(x => x.free && x.name === r.name) ? xs : [...xs, { name: r.name, category: 'Reward', qty: 1, unit_price_paise: 0, cost_paise: null, free: true }])
+            setRewardSel(r.id); setStampSel(null)
+          }}>
+            {rewardSel === r.id ? 'Selected ✓' : 'Apply'}
           </button>
         </div>)}
 
