@@ -489,7 +489,7 @@ export default function Staff() {
           }
           const o = h.o
           return <div key={o.id} style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
-            <div className="spread sm"><span><b className="num">{inr(o.total_paise)}</b> <span className="muted">bill</span>{mods.points_on && o.points_earned > 0 && <span className="chip a" style={{ marginLeft: 6 }}>+{o.points_earned} pts</span>}{o.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {o.created_by_name}</span>}</span><span className="muted xs">{fmtDate(o.created_at)}</span></div>
+            <div className="spread sm"><span><b className="num">{inr(o.total_paise)}</b> <span className="muted">bill</span>{mods.points_on && o.points_earned > 0 && <span className="chip a" style={{ marginLeft: 6 }}>+{o.points_earned} pts</span>}{(o.rewards || []).map(rw => <span key={rw.reward_id} className="chip g" style={{ marginLeft: 6 }}>offer: {rw.name}</span>)}{o.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {o.created_by_name}</span>}</span><span className="muted xs">{fmtDate(o.created_at)}</span></div>
             <div className="xs muted">{(o.items || []).map(it => `${it.name} ×${it.qty}${it.free ? '(free)' : ''}`).join(', ')}</div>
             <div className="xs muted num">{mods.wallet_on ? 'Wallet ' + inr(o.wallet_paid_paise) + ' · ' : ''}{o.payment_method} {inr(o.other_paid_paise)}</div>
           </div>
