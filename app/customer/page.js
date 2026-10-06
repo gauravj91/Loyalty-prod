@@ -45,7 +45,7 @@ export default function CustomerPortal() {
       setSlug(slug || '')
       await load(cid)
       if (fb) setFbFor(fb)
-    }     } catch (e) {
+    } catch (e) {
       const m = errMsg(e)
       setErr(/anonym/i.test(m) ? 'This link could not be opened because guest access is switched off. The restaurant owner can enable it in Supabase: Authentication → Anonymous sign-ins.' : m)
       setStatus('need_link')
@@ -223,7 +223,8 @@ export default function CustomerPortal() {
       {activity.map((a, i) => <div key={i}>
         {a.kind === 'order'
           ? <div className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', cursor: 'pointer' }} onClick={() => setOpen(open === i ? null : i)}>
-              <span><b className="num">{inr(a.o.total_paise)}</b> <span className="muted">bill</span>{a.o.points_earned > 0 && <span className="chip a" style={{ marginLeft: 6 }}>+{a.o.points_earned} pts</span>}{(a.o.rewards || []).map(rw => <span key={rw.reward_id} className="chip g" style={{ marginLeft: 6 }}>{rw.name}</span>)}</span>              <span className="muted xs">{fmtDate(a.at)}</span>
+              <span><b className="num">{inr(a.o.total_paise)}</b> <span className="muted">bill</span>{a.o.points_earned > 0 && <span className="chip a" style={{ marginLeft: 6 }}>+{a.o.points_earned} pts</span>}{(a.o.rewards || []).map(rw => <span key={rw.reward_id} className="chip g" style={{ marginLeft: 6 }}>{rw.name}</span>)}</span>
+              <span className="muted xs">{fmtDate(a.at)}</span>
             </div>
           : a.kind === 'stamp'
           ? <div className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
