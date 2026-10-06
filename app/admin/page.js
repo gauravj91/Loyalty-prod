@@ -53,8 +53,7 @@ export default function Admin() {
   const [rules, setRules] = useState([]); const [ruleF, setRuleF] = useState({ name: '', target_type: 'item', target_value: '', required_count: '10', reward_type: 'free_item', reward_value: '1', reward_label: '' })
   const [pc, setPc] = useState(null); const [pcF, setPcF] = useState({ per100: '1', active: true, b0: '0', b1: '500', b2: '1000', b3: '2500' })
   const [rws, setRws] = useState([]); const [rwF, setRwF] = useState({ name: '', description: '', required_points: '500', value: '250', max: '1' })
-  const [staff, setStaff] = useState([]); const [stF, setStF] = useState({ email: '', role: 'staff', name: '' })
-  const [q, setQ] = useState(''); const [custs, setCusts] = useState([]); const [sel, setSel] = useState(null)
+  const [staff, setStaff] = useState([]); const [stF, setStF] = useState({ email: '', role: 'staff', name: '', phone: '', pw: '' })  const [q, setQ] = useState(''); const [custs, setCusts] = useState([]); const [sel, setSel] = useState(null)
   const [adjF, setAdjF] = useState({ amount: '', reason: '' }); const [link, setLink] = useState(null)
   const [outs, setOuts] = useState([]); const [outF, setOutF] = useState({ name: '', address: '', phone: '' })
   const [campSeg, setCampSeg] = useState('all'); const [campPts, setCampPts] = useState(100)
@@ -348,13 +347,34 @@ export default function Admin() {
   const toggle = async (table, id, active) => {
     await supabase.from(table).update({ active: !active }).eq('id', id); loadOffers()
   }
-
+  async function createStaffLogin() {
+    const name = stF.name.trim(), pw = stF.pw
+    const d = stF.phone.replace(/\D/g, '')
+    const digits = d.length === 12 && d.startsWith('91') ? d.slice(2) : d.replace(/^0+/, '')
+    const realEmail = stF.email.trim()
+    if (name.length < 2) return setErr('Enter the staff name.')
+    if (!realEmail && digits.length !== 10) return setErr('Enter a 10-digit phone number (or an email below).')
+    if (pw.length < 8) return setErr('Starting password must be at least 8 characters.')
+    const loginEmail = realEmail || staffEmail(digits)
+    setErr('')
+    const { data: s } = await supabase.auth.getSession()
+    const adminSession = s.session
+    const { error: suErr } = await supabase.auth.signUp({ email: loginEmail, password: pw })
+    if (adminSession) await supabase.auth.setSession(adminSession)
+    const existed = suErr && /already registered|already exists|been taken/i.test(suErr.message || '')
+    if (suErr && !existed) return setErr(errMsg(suErr))
+    const { error: linkErr } = await supabase.rpc('add_staff', { p_restaurant_id: rest.id, p_email: loginEmail, p_role: stF.role, p_name: name })
+    if (linkErr) return setErr(errMsg(linkErr))
+    flash(existed
+      ? 'Linked an existing login for ' + name + ' — they sign in with their previous password.'
+      : 'Login created — ' + name + ' signs in with ' + (realEmail ? 'email' : 'phone ' + digits) + ' and the password you set.')
+    setStF({ email: '', role: 'staff', name: '', phone: '', pw: '' }); loadStaff()
+  }
   async function addStaff() {
     const { error } = await supabase.rpc('add_staff', {
       p_restaurant_id: rest.id, p_email: stF.email, p_role: stF.role, p_name: stF.name || null,
     })
-    error ? setErr(errMsg(error)) : flash('Staff added'); setStF({ email: '', role: 'staff', name: '' }); loadStaff()
-  }
+    error ? setErr(errMsg(error)) : flash('Staff added'); setStF({ email: '', role: 'staff', name: '', phone: '', pw: '' }); loadStaff()  }
   async function updStaff(id, vals) { await supabase.from('restaurant_users').update(vals).eq('id', id); loadStaff() }
 
   async function searchCusts(s) {
@@ -840,13 +860,26 @@ export default function Admin() {
           <button className="chip" style={{ cursor: 'pointer' }} onClick={() => updStaff(s.id, { status: s.status === 'active' ? 'inactive' : 'active' })}>{s.status === 'active' ? 'Deactivate' : 'Activate'}</button>
         </span>
       </div>)}
-      <h3 style={{ marginTop: 14 }}>Add team member</h3>
-      <p className="xs muted">They must sign up first: open the app → Login → "Staff sign-up". Then add their email here.</p>
-      <div className="row" style={{ marginTop: 8 }}><input className="input grow" placeholder="their@email.com" value={stF.email} onChange={e => setStF({ ...stF, email: e.target.value })} />
-        <input className="input" style={{ width: 130 }} placeholder="Name" value={stF.name} onChange={e => setStF({ ...stF, name: e.target.value })} />
+            <h3 style={{ marginTop: 14 }}>Add a team member</h3>
+      <p className="xs muted">Creates their login instantly — nothing to sign up on their side. They sign in with their phone number and the password you set, and can change it anytime from the Staff portal.</p>
+      <div className="row" style={{ marginTop: 8 }}>
+        <input className="input grow" placeholder="Full name" value={stF.name} onChange={e => setStF({ ...stF, name: e.target.value })} />
         <select className="select" style={{ width: 120 }} value={stF.role} onChange={e => setStF({ ...stF, role: e.target.value })}>
           <option value="staff">staff</option><option value="manager">manager</option><option value="owner">owner</option></select>
-        <button className="btn slim primary" onClick={addStaff}>Add</button></div>
+      </div>
+      <div className="row" style={{ marginTop: 8 }}>
+        <input className="input grow" type="tel" placeholder="Phone (10 digits) — their login" value={stF.phone} onChange={e => setStF({ ...stF, phone: e.target.value })} />
+        <input className="input" style={{ width: 180 }} placeholder="Starting password (8+ chars)" value={stF.pw} onChange={e => setStF({ ...stF, pw: e.target.value })} />
+      </div>
+      <div style={{ height: 10 }} />
+      <button className="btn primary" onClick={createStaffLogin}>Create login &amp; add to team</button>
+      <details className="sec" style={{ marginTop: 10 }}>
+        <summary className="sm muted">They already created their own login? Link by email</summary>
+        <div className="row" style={{ marginTop: 8 }}>
+          <input className="input grow" placeholder="their@email.com" value={stF.email} onChange={e => setStF({ ...stF, email: e.target.value })} />
+          <button className="btn slim" onClick={addStaff}>Link</button>
+        </div>
+      </details>
     </div>}
 
     {tab === 'customers' && <div className="card">
