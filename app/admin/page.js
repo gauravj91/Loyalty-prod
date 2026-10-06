@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { supabase } from '../../lib/supabase'
 import { inr, toPaise, fmtDate, dayStart, tierFor, errMsg, customerLink, downloadCsv, staffEmail } from '../../lib/helpers'
+
 const S = ({ title, children, open }) => (
   <details className="sec" open={open}><summary>{title}</summary><div style={{ paddingTop: 10 }}>{children}</div></details>
 )
@@ -51,18 +52,21 @@ export default function Admin() {
   const [ws, setWs] = useState(null); const [wsF, setWsF] = useState({ name: 'Wallet offer', min: '500', bonus: '10', cap: '' })
   const [rules, setRules] = useState([]); const [ruleF, setRuleF] = useState({ name: '', target_type: 'item', target_value: '', required_count: '10', reward_type: 'free_item', reward_value: '1', reward_label: '' })
   const [pc, setPc] = useState(null); const [pcF, setPcF] = useState({ per100: '1', active: true, b0: '0', b1: '500', b2: '1000', b3: '2500' })
-  const [rws, setRws] = useState([]); const [rwF, setRwF] = useState({ name: '', description: '', required_points: '500', value: '250', max: '1' })
-  const [staff, setStaff] = useState([]); const [stF, setStF] = useState({ email: '', role: 'staff', name: '', phone: '', pw: '' })  const [adjF, setAdjF] = useState({ amount: '', reason: '' }); const [link, setLink] = useState(null)
+  const [rws, setRws] = useState([]); const [rwF, setRwF] = useState({ name: '', description: '', required_points: '500', max: '1' })
+  const [staff, setStaff] = useState([]); const [stF, setStF] = useState({ email: '', role: 'staff', name: '', phone: '', pw: '' })
+  const [q, setQ] = useState(''); const [custs, setCusts] = useState([]); const [sel, setSel] = useState(null)
+  const [adjF, setAdjF] = useState({ amount: '', reason: '' }); const [link, setLink] = useState(null)
   const [outs, setOuts] = useState([]); const [outF, setOutF] = useState({ name: '', address: '', phone: '' })
   const [campSeg, setCampSeg] = useState('all'); const [campPts, setCampPts] = useState(100)
   const [campMsg, setCampMsg] = useState('Hi {name}! We miss you — visit us this week and treat yourself.'); const [campList, setCampList] = useState(null)
   const [campIdx, setCampIdx] = useState(0); const [sentIds, setSentIds] = useState([])
-  const [mods, setMods] = useState({ wallet_on: true, stamps_on: true, points_on: true }); const [modsF, setModsF] = useState({ wallet_on: true, stamps_on: true, points_on: true })
   const [menu, setMenu] = useState([]); const [miF, setMiF] = useState({ id: null, name: '', category: '', price: '', cost: '', active: true })
   const [mk, setMk] = useState(null); const [mkF, setMkF] = useState({ referrer: '100', referee: '100', birthday: '0' })
   const [bdays, setBdays] = useState([]); const [annivs, setAnnivs] = useState([]); const [claims, setClaims] = useState(new Set())
   const [fbList, setFbList] = useState([])
   const [todo, setTodo] = useState(null)
+  const [mods, setMods] = useState({ wallet_on: true, stamps_on: true, points_on: true }); const [modsF, setModsF] = useState({ wallet_on: true, stamps_on: true, points_on: true })
+  const [brandF, setBrandF] = useState({ logo: '', cover: '', terms: '' }); const [brandBusy, setBrandBusy] = useState(null)
 
   useEffect(() => { (async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -81,6 +85,37 @@ export default function Admin() {
   useEffect(() => { if (rest && tab === 'campaigns') buildCampaign() }, [rest, tab, campSeg, campPts])
   useEffect(() => { if (rest && tab === 'menu') loadMenu() }, [rest, tab])
   useEffect(() => { if (rest && tab === 'marketing') loadMarketing() }, [rest, tab])
+  useEffect(() => { if (rest && tab === 'settings') loadBranding() }, [rest, tab])
+
+  async function loadBranding() {
+    const { data } = await supabase.from('restaurants').select('logo_url, cover_url, rewards_terms').eq('id', rest.id).single()
+    setBrandF({ logo: data?.logo_url || '', cover: data?.cover_url || '', terms: data?.rewards_terms || '' })
+  }
+  async function uploadBrand(e, kind) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 4 * 1024 * 1024) return setErr('Image too large — keep it under 4 MB.')
+    setErr(''); setMsg(''); setBrandBusy(kind)
+    try {
+      const path = rest.id + '/' + kind + '-' + Date.now()
+      const { error: upErr } = await supabase.storage.from('branding').upload(path, file, { contentType: file.type })
+      if (upErr) throw upErr
+      const { data } = supabase.storage.from('branding').getPublicUrl(path)
+      const url = data.publicUrl
+      const next = { logo: kind === 'logo' ? url : brandF.logo, cover: kind === 'cover' ? url : brandF.cover, terms: brandF.terms }
+      const { error } = await supabase.rpc('update_branding', { p_restaurant_id: rest.id, p_logo_url: next.logo, p_cover_url: next.cover, p_rewards_terms: next.terms })
+      if (error) throw error
+      setBrandF(next)
+      flash(kind === 'logo' ? 'Logo updated' : 'Cover photo updated')
+    } catch (ex) { setErr(errMsg(ex)) }
+    setBrandBusy(null)
+  }
+  async function saveTerms() {
+    const { error } = await supabase.rpc('update_branding', {
+      p_restaurant_id: rest.id, p_logo_url: brandF.logo, p_cover_url: brandF.cover, p_rewards_terms: brandF.terms,
+    })
+    error ? setErr(errMsg(error)) : flash('Terms saved')
+  }
 
   async function loadTodo() {
     const t0 = dayStart(0), y0 = dayStart(1)
@@ -214,7 +249,7 @@ export default function Admin() {
     setClaims(new Set((bc.data || []).map(x => x.customer_id)))
     setFbList(fb.data || [])
     const rows = (cs.data || []).map(c => ({ ...c, _b: c.birth_date ? new Date(c.birth_date + 'T00:00:00') : null, _a: c.anniversary_date ? new Date(c.anniversary_date + 'T00:00:00') : null }))
-    setAnnivs(rows.filter(c => c._a && c._a.getMonth() === m).sort((a, b) => a._a.getDate() - b._a.getDate()))
+    setBdays(rows.filter(c => c._b && c._b.getMonth() === m).sort((a, b) => a._b.getDate() - b._b.getDate()))
     setAnnivs(rows.filter(c => c._a && c._a.getMonth() === m).sort((a, b) => a._a.getDate() - b._a.getDate()))
   }
 
@@ -225,9 +260,8 @@ export default function Admin() {
       supabase.from('stamp_rules').select('*').eq('restaurant_id', rid).order('created_at'),
       supabase.from('points_config').select('*').eq('restaurant_id', rid).maybeSingle(),
       supabase.from('rewards').select('*').eq('restaurant_id', rid).order('required_points'),
+      supabase.from('modules_config').select('*').eq('restaurant_id', rid).maybeSingle(),
     ])
-    const mdq = await supabase.from('modules_config').select('*').eq('restaurant_id', rid).maybeSingle()
-    if (mdq.data) { setMods(mdq.data); setModsF({ wallet_on: mdq.data.wallet_on, stamps_on: mdq.data.stamps_on, points_on: mdq.data.points_on }) }
     if (w.data?.[0]) { setWs(w.data[0]); setWsF({ name: w.data[0].name, min: String(w.data[0].min_topup_paise / 100), bonus: String(w.data[0].bonus_pct), cap: w.data[0].bonus_cap_paise ? String(w.data[0].bonus_cap_paise / 100) : '' }) }
     setRules(sr.data || [])
     if (p.data) {
@@ -236,6 +270,7 @@ export default function Admin() {
       setPcF({ per100: String(p.data.points_per_rupee * 100), active: p.data.active, ...t })
     }
     setRws(rw.data || [])
+    if (md.data) { setMods(md.data); setModsF({ wallet_on: md.data.wallet_on, stamps_on: md.data.stamps_on, points_on: md.data.points_on }) }
   }
   async function loadStaff() {
     const { data } = await supabase.from('restaurant_users').select('*').eq('restaurant_id', rest.id)
@@ -246,36 +281,6 @@ export default function Admin() {
     setOuts(data || [])
   }
 
-  const flash = m => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 3000) }
-
-  async function saveItem() {
-    const vals = { name: miF.name.trim(), category: miF.category.trim() || null, price_paise: toPaise(miF.price), cost_paise: miF.cost ? toPaise(miF.cost) : null, active: miF.active }
-    if (!vals.name) return setErr('Item name is required.')
-    const { error } = miF.id
-      ? await supabase.from('menu_items').update(vals).eq('id', miF.id)
-      : await supabase.from('menu_items').insert({ ...vals, restaurant_id: rest.id })
-    error ? setErr(errMsg(error)) : flash(miF.id ? 'Item updated' : 'Item added')
-    setMiF({ id: null, name: '', category: '', price: '', cost: '', active: true }); loadMenu()
-  }
-  function editItem(m) { setMiF({ id: m.id, name: m.name, category: m.category || '', price: String(m.price_paise / 100), cost: m.cost_paise != null ? String(m.cost_paise / 100) : '', active: m.active }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
-  async function delItem(m) {
-    if (!confirm('Delete "' + m.name + '" from the menu? Past bills are not affected.')) return
-    const { error } = await supabase.from('menu_items').delete().eq('id', m.id)
-    error ? setErr(errMsg(error)) : flash('Item deleted'); loadMenu()
-  }
-
-  async function saveMk() {
-    const vals = { referrer_paise: toPaise(mkF.referrer), referee_paise: toPaise(mkF.referee), birthday_paise: toPaise(mkF.birthday) }
-    const { error } = mk
-      ? await supabase.from('marketing_config').update(vals).eq('restaurant_id', rest.id)
-      : await supabase.from('marketing_config').insert({ ...vals, restaurant_id: rest.id })
-    error ? setErr(errMsg(error)) : flash('Marketing settings saved'); loadMarketing()
-  }
-  async function claimBday(c) {
-    if (!confirm('Credit the birthday bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
-    const { error } = await supabase.rpc('claim_birthday', { p_restaurant_id: rest.id, p_customer_id: c.id })
-    error ? setErr(errMsg(error)) : flash('Birthday credit given'); loadMarketing()
-  }
   async function saveModules() {
     const vals = { wallet_on: modsF.wallet_on, stamps_on: modsF.stamps_on, points_on: modsF.points_on }
     const { error } = await supabase.from('modules_config').upsert({ ...vals, restaurant_id: rest.id }, { onConflict: 'restaurant_id' })
@@ -310,6 +315,8 @@ export default function Admin() {
     loadOffers()
   }
 
+  const flash = m => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 3000) }
+
   async function saveScheme() {
     const vals = { name: wsF.name, min_topup_paise: toPaise(wsF.min), bonus_pct: parseFloat(wsF.bonus || 0), bonus_cap_paise: wsF.cap ? toPaise(wsF.cap) : null }
     const { error } = ws
@@ -335,16 +342,18 @@ export default function Admin() {
     error ? setErr(errMsg(error)) : flash('Points settings saved'); loadOffers()
   }
   async function addReward() {
+    if (!rwF.name.trim()) return setErr('Give the reward a name, e.g. Free ice cream.')
     const { error } = await supabase.from('rewards').insert({
-      restaurant_id: rest.id, name: rwF.name, description: rwF.description,
-      required_points: parseInt(rwF.required_points), value_paise: toPaise(rwF.value), max_per_customer: parseInt(rwF.max || 0),
+      restaurant_id: rest.id, name: rwF.name.trim(), description: rwF.description.trim() || null,
+      required_points: parseInt(rwF.required_points || 0), value_paise: 0, max_per_customer: parseInt(rwF.max || 0),
     })
     error ? setErr(errMsg(error)) : flash('Reward added')
-    setRwF({ ...rwF, name: '', description: '' }); loadOffers()
+    setRwF({ name: '', description: '', required_points: '500', max: '1' }); loadOffers()
   }
   const toggle = async (table, id, active) => {
     await supabase.from(table).update({ active: !active }).eq('id', id); loadOffers()
   }
+
   async function createStaffLogin() {
     const name = stF.name.trim(), pw = stF.pw
     const d = stF.phone.replace(/\D/g, '')
@@ -373,7 +382,8 @@ export default function Admin() {
       p_restaurant_id: rest.id, p_email: stF.email, p_role: stF.role, p_name: stF.name || null,
     })
     error ? setErr(errMsg(error)) : flash('Staff added'); setStF({ email: '', role: 'staff', name: '', phone: '', pw: '' }); loadStaff()
-    async function updStaff(id, vals) { await supabase.from('restaurant_users').update(vals).eq('id', id); loadStaff() }
+  }
+  async function updStaff(id, vals) { await supabase.from('restaurant_users').update(vals).eq('id', id); loadStaff() }
 
   async function searchCusts(s) {
     setQ(s)
@@ -450,6 +460,35 @@ export default function Admin() {
     flash('All phone numbers copied — paste them while creating a WhatsApp broadcast list.')
   }
 
+  async function saveItem() {
+    const vals = { name: miF.name.trim(), category: miF.category.trim() || null, price_paise: toPaise(miF.price), cost_paise: miF.cost ? toPaise(miF.cost) : null, active: miF.active }
+    if (!vals.name) return setErr('Item name is required.')
+    const { error } = miF.id
+      ? await supabase.from('menu_items').update(vals).eq('id', miF.id)
+      : await supabase.from('menu_items').insert({ ...vals, restaurant_id: rest.id })
+    error ? setErr(errMsg(error)) : flash(miF.id ? 'Item updated' : 'Item added')
+    setMiF({ id: null, name: '', category: '', price: '', cost: '', active: true }); loadMenu()
+  }
+  function editItem(m) { setMiF({ id: m.id, name: m.name, category: m.category || '', price: String(m.price_paise / 100), cost: m.cost_paise != null ? String(m.cost_paise / 100) : '', active: m.active }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+  async function delItem(m) {
+    if (!confirm('Delete "' + m.name + '" from the menu? Past bills are not affected.')) return
+    const { error } = await supabase.from('menu_items').delete().eq('id', m.id)
+    error ? setErr(errMsg(error)) : flash('Item deleted'); loadMenu()
+  }
+
+  async function saveMk() {
+    const vals = { referrer_paise: toPaise(mkF.referrer), referee_paise: toPaise(mkF.referee), birthday_paise: toPaise(mkF.birthday) }
+    const { error } = mk
+      ? await supabase.from('marketing_config').update(vals).eq('restaurant_id', rest.id)
+      : await supabase.from('marketing_config').insert({ ...vals, restaurant_id: rest.id })
+    error ? setErr(errMsg(error)) : flash('Marketing settings saved'); loadMarketing()
+  }
+  async function claimBday(c) {
+    if (!confirm('Credit the birthday bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
+    const { error } = await supabase.rpc('claim_birthday', { p_restaurant_id: rest.id, p_customer_id: c.id })
+    error ? setErr(errMsg(error)) : flash('Birthday credit given'); loadMarketing()
+  }
+
   const ledgerRows = [
     ...ordersRaw.map(o => ({ at: o.created_at, what: 'Bill — ' + o.payment_method, out: outletNames[o.outlet_id] || '—', cash: o.other_paid_paise, wallet: o.wallet_paid_paise, credit: 0, by: o.created_by_name })),
     ...wtxRaw.filter(x => x.type === 'topup').map(x => ({ at: x.created_at, what: 'Wallet top-up (' + (x.payment_method || 'cash') + ')', out: outletNames[x.outlet_id] || '—', cash: x.amount_paise, wallet: 0, credit: x.bonus_paise || 0, by: x.created_by_name })),
@@ -474,20 +513,16 @@ export default function Admin() {
     {err && <div className="err sm">{err}</div>}
 
     <div className="tabs">
-      {['overview', 'books', 'menu', 'marketing', 'campaigns', 'offers', 'staff', 'customers', 'outlets'].map(t =>
+      {['overview', 'books', 'menu', 'marketing', 'campaigns', 'offers', 'staff', 'customers', 'outlets', 'settings'].map(t =>
         <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}
     </div>
 
     {tab === 'overview' && <>
-            {todo && <div className="card">
+      {todo && <div className="card">
         <h2>Today · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}</h2>
         <details className="sec" open>
           <summary>Daily recap — yesterday {inr(todo.ySales)} · {todo.yBills} bill(s) · cash to reconcile {inr(todo.yCash)}</summary>
-          <div className="row" style={{ flexWrap: 'wrap', margin: '10px 0' }}>
-            <span className="chip">Yesterday: {inr(todo.ySales)} · {todo.yBills} bill(s)</span>
-            <span className="chip">Cash to reconcile: {inr(todo.yCash)}</span>
-          </div>
-          <p className="xs muted" style={{ marginTop: 0 }}>Daily habit: match that cash figure against the drawer before service starts.</p>
+          <p className="xs muted" style={{ marginTop: 8 }}>Daily habit: match that cash figure against the drawer before service starts.</p>
         </details>
         {todo.bdays.length > 0 && <details className="sec">
           <summary>Birthdays — next 7 days ({todo.bdays.length})</summary>
@@ -512,7 +547,7 @@ export default function Admin() {
             <span><b style={{ color: '#B23A2E' }}>{'★'.repeat(f.stars)}</b> <span className="muted">{f.customers?.name || 'Guest'}</span></span>
             <span className="xs muted">{fmtDate(f.created_at)}</span>
           </div>)}
-          <p className="xs muted">Reach out within 24 hours — a recovered unhappy guest becomes the most loyal one. Find their number under Customers.</p>
+          <p className="xs muted">Reach out within 24 hours — a recovered unhappy guest becomes the most loyal one.</p>
         </details>}
         {todo.noFb.length > 0 && <details className="sec">
           <summary>Feedback not yet asked ({todo.noFb.length})</summary>
@@ -521,36 +556,6 @@ export default function Admin() {
             <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/?text=' + encodeURIComponent('Thank you for visiting ' + rest.name + '! How was everything today? Rate your visit: ' + window.location.origin + '/customer?slug=' + rest.slug + '&qr=' + (todo.cMap[o.customer_id]?.qr_code || '') + '&k=' + (todo.cMap[o.customer_id]?.qr_secret || '') + '&fb=' + o.id)}>Ask</a>
           </div>)}
         </details>}
-        {todo.idle > 0 && <div className="spread" style={{ marginTop: 14 }}>
-          <span className="sm"><b>{todo.idle}</b> customer(s) haven't visited in 14+ days</span>
-          <button className="btn slim primary" onClick={() => { setCampSeg('idle14'); setTab('campaigns') }}>Start win-back</button>
-        </div>}
-        {todo.bdays.length === 0 && todo.annivs.length === 0 && todo.bad.length === 0 && todo.noFb.length === 0 && todo.idle === 0
-          && <p className="sm muted" style={{ marginTop: 10 }}>All clear — nothing needs your attention today.</p>}
-      </div>}
-        </>}
-        {todo.annivs.length > 0 && <>
-          <h3 style={{ marginTop: 14 }}>Anniversaries — next 7 days ({todo.annivs.length})</h3>
-          {todo.annivs.map(c => <div key={c.id} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
-            <span><b>{c.name || 'Customer'}</b> <span className="muted xs">{c._o.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span></span>
-            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/' + waNum(c.phone) + '?text=' + encodeURIComponent('Happy anniversary, ' + (c.name || 'friend') + '! Celebrate with us at ' + rest.name + ' this week?')}>Wish</a>
-          </div>)}
-        </>}
-        {todo.bad.length > 0 && <>
-          <h3 style={{ marginTop: 14, color: '#B23A2E' }}>Low ratings to recover ({todo.bad.length})</h3>
-          {todo.bad.map(f => <div key={f.created_at + (f.order_id || '')} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
-            <span><b style={{ color: '#B23A2E' }}>{'★'.repeat(f.stars)}</b> <span className="muted">{f.customers?.name || 'Guest'}</span></span>
-            <span className="xs muted">{fmtDate(f.created_at)}</span>
-          </div>)}
-          <p className="xs muted">Reach out within 24 hours — a recovered unhappy guest becomes the most loyal one. Find their number under Customers.</p>
-        </>}
-        {todo.noFb.length > 0 && <>
-          <h3 style={{ marginTop: 14 }}>Feedback not yet asked ({todo.noFb.length})</h3>
-          {todo.noFb.map(o => <div key={o.id} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
-            <span><b>{o.customers?.name || 'Guest'}</b> <span className="muted num">{inr(o.total_paise)}</span> <span className="muted xs">{fmtDate(o.created_at)}</span></span>
-            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/?text=' + encodeURIComponent('Thank you for visiting ' + rest.name + '! How was everything today? Rate your visit: ' + window.location.origin + '/customer?slug=' + rest.slug + '&qr=' + (todo.cMap[o.customer_id]?.qr_code || '') + '&k=' + (todo.cMap[o.customer_id]?.qr_secret || '') + '&fb=' + o.id)}>Ask</a>
-          </div>)}
-        </>}
         {todo.idle > 0 && <div className="spread" style={{ marginTop: 14 }}>
           <span className="sm"><b>{todo.idle}</b> customer(s) haven't visited in 14+ days</span>
           <button className="btn slim primary" onClick={() => { setCampSeg('idle14'); setTab('campaigns') }}>Start win-back</button>
@@ -578,27 +583,22 @@ export default function Admin() {
             <span className="chip">Bonus given {inr(stats.bonusGiven)}</span>
             <span className="chip">Points issued {stats.points}</span>
           </div>
-
           <h3 style={{ marginTop: 16 }}>Daily sales</h3>
           <Bars series={stats.series} />
-
           <h3 style={{ marginTop: 16 }}>Payment mix</h3>
           <HBars items={[
             ...Object.entries(stats.byMethod).map(([m, v]) => ({ label: m[0].toUpperCase() + m.slice(1), value: v })),
             { label: 'Wallet', value: stats.walletSales },
           ].filter(i => i.value > 0)} />
-
           <div className="row" style={{ marginTop: 14 }}>
             <div className="grow"><div className="xs muted">NEW CUSTOMERS</div><div className="num" style={{ fontSize: 22, fontWeight: 800 }}>{stats.newC}</div></div>
             <div className="grow"><div className="xs muted">RETURNING</div><div className="num" style={{ fontSize: 22, fontWeight: 800 }}>{stats.retC}</div></div>
             <div className="grow"><div className="xs muted">REPEAT RATE</div><div className="num" style={{ fontSize: 22, fontWeight: 800 }}>{stats.customers ? Math.round(stats.retC / stats.customers * 100) + '%' : '—'}</div></div>
           </div>
-
           {stats.outlets.length > 0 && <>
             <h3 style={{ marginTop: 16 }}>By outlet</h3>
             <OutletTable rows={stats.outlets} />
           </>}
-
           {stats.staffRows.length > 0 && <>
             <h3 style={{ marginTop: 16 }}>By staff member</h3>
             <table className="t"><thead><tr><th>Staff</th><th>Bills</th><th>Sales</th><th>Avg bill</th><th>Wallet used</th></tr></thead><tbody>
@@ -608,7 +608,6 @@ export default function Admin() {
               </tr>)}
             </tbody></table>
           </>}
-
           {Object.keys(stats.itemAgg).length > 0 && <>
             <h3 style={{ marginTop: 16 }}>Top items</h3>
             <table className="t"><thead><tr><th>Item</th><th>Qty</th><th>Sales</th></tr></thead><tbody>
@@ -674,7 +673,7 @@ export default function Admin() {
     </>}
 
     {tab === 'menu' && <div className="card">
-      <div className="spread"><h2>Menu</h2><a className="btn slim" href="/admin/import">Import from PDF</a></div> 
+      <div className="spread"><h2>Menu</h2><a className="btn slim" href="/admin/import">Import from PDF</a></div>
       <p className="sm muted">One-tap billing for staff. Cost price (optional) unlocks true gross margin in Books — staff never see costs.</p>
       <div className="row"><input className="input grow" placeholder="Item name" value={miF.name} onChange={e => setMiF({ ...miF, name: e.target.value })} />
         <input className="input" style={{ width: 110 }} placeholder="Category" value={miF.category} onChange={e => setMiF({ ...miF, category: e.target.value })} /></div>
@@ -685,7 +684,7 @@ export default function Admin() {
         {miF.id && <button className="btn slim" onClick={() => setMiF({ id: null, name: '', category: '', price: '', cost: '', active: true })}>Cancel</button>}
       </div>
       <div style={{ height: 12 }} />
-      {menu.length === 0 && <p className="sm muted">No items yet — add your top sellers first.</p>}
+      {menu.length === 0 && <p className="sm muted">No items yet — add your top sellers first, or import a PDF above.</p>}
       {menu.map(m => <div key={m.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
         <span><b>{m.name}</b> <span className="muted">{m.category}</span><br />
           <span className="num muted">{inr(m.price_paise)}{m.cost_paise != null ? ' · cost ' + inr(m.cost_paise) + ' · margin ' + Math.round((m.price_paise - m.cost_paise) / m.price_paise * 100) + '%' : ''}</span></span>
@@ -700,7 +699,7 @@ export default function Admin() {
     {tab === 'marketing' && <>
       <div className="card">
         <h2>Rewards & occasions</h2>
-        <p className="sm muted">Referral bonuses credit both wallets the moment staff enters the friend's code. Birthday credit is once per customer per year, given at the counter or from the Today card.</p>
+        <p className="sm muted">Referral bonuses credit both wallets the moment staff enters the friend's code. Birthday credit is once per customer per year.</p>
         <div className="row">
           <div className="grow"><label className="label">Referrer gets ₹</label><input className="input" type="number" value={mkF.referrer} onChange={e => setMkF({ ...mkF, referrer: e.target.value })} /></div>
           <div className="grow"><label className="label">New friend gets ₹</label><input className="input" type="number" value={mkF.referee} onChange={e => setMkF({ ...mkF, referee: e.target.value })} /></div>
@@ -710,7 +709,7 @@ export default function Admin() {
       </div>
       <div className="card">
         <h3>Birthdays this month ({bdays.length})</h3>
-        {bdays.length === 0 && <p className="sm muted">No birthdays this month. Staff can add dates when creating customers; you can set them in the customer modal.</p>}
+        {bdays.length === 0 && <p className="sm muted">No birthdays this month.</p>}
         {bdays.map(c => <div key={c.id} className="spread" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', gap: 8 }}>
           <span className="grow"><b>{c.name || 'Customer'}</b> <span className="muted num sm">{c.phone}</span>
             <div className="xs muted">{c._b.getDate() + ' ' + c._b.toLocaleString('en', { month: 'long' })}{claims.has(c.id) ? ' · credit given this year' : ''}</div></span>
@@ -728,13 +727,12 @@ export default function Admin() {
       </div>
       <div className="card">
         <div className="spread"><h3>Guest feedback</h3>{fbAvg && <span className="chip a">avg {fbAvg} / 5 ({fbList.length})</span>}</div>
-        {fbList.length === 0 && <p className="sm muted">No feedback yet — staff can request it after each bill in the Staff portal; low ratings also surface on the Today card.</p>}
+        {fbList.length === 0 && <p className="sm muted">No feedback yet — staff can request it after each bill; low ratings also surface on the Today card.</p>}
         {fbList.map(f => <div key={f.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
           <span><b className="num" style={{ color: '#8F6A12' }}>{'★'.repeat(f.stars)}{'☆'.repeat(5 - f.stars)}</b> <span className="muted">{f.customers?.name || ''}</span>{f.comment && <div className="xs muted">"{f.comment}"</div>}</span>
           <span className="muted xs">{fmtDate(f.created_at)}</span>
         </div>)}
-        {fbList.filter(f => f.stars >= 4 && f.comment).length > 0 && <div style={{ height: 10 }} />
-        }
+        {fbList.filter(f => f.stars >= 4 && f.comment).length > 0 && <div style={{ height: 10 }} />}
         {fbList.filter(f => f.stars >= 4 && f.comment).length > 0 && <button className="btn" onClick={() => downloadCsv(`testimonials-${rest.slug}.csv`, [
           ['Date', 'Stars', 'Name', 'Comment'],
           ...fbList.filter(f => f.stars >= 4 && f.comment).map(f => [fmtDate(f.created_at), f.stars, f.customers?.name || '', f.comment]),
@@ -744,7 +742,7 @@ export default function Admin() {
 
     {tab === 'campaigns' && <div className="card">
       <h2>Campaigns — bring customers back</h2>
-      <p className="sm muted">Pick a segment, write one message with placeholders {'{name}'} {'{wallet}'} {'{points}'}, then send. Assisted mode opens each customer's WhatsApp with the message pre-filled and tracks your progress — no retyping.</p>
+      <p className="sm muted">Pick a segment, write one message with placeholders {'{name}'} {'{wallet}'} {'{points}'}, then send.</p>
       <div className="row">
         <select className="select" style={{ width: 210 }} value={campSeg} onChange={e => setCampSeg(e.target.value)}>
           <option value="all">All customers</option>
@@ -769,9 +767,7 @@ export default function Admin() {
           </div>
           <div style={{ height: 8 }} />
           <button className="btn slim" onClick={copyNumbers}>Copy all phone numbers</button>
-          <p className="xs muted" style={{ marginTop: 8 }}>
-            Tip: WhatsApp bans numbers that blast identical messages — keep it under ~25 per day from one number, and the personalization above helps.
-          </p>
+          <p className="xs muted" style={{ marginTop: 8 }}>Tip: keep under ~25 WhatsApp sends per day from one number.</p>
         </div>}
         {campList.map(c => <div key={c.id} className="spread" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', gap: 10 }}>
           <span className="grow">
@@ -791,8 +787,8 @@ export default function Admin() {
     </div>}
 
     {tab === 'offers' && <div className="card">
-            <S title="Modules — show or hide wallet, stamps, points" open>
-        <p className="xs muted">Switch a module off and it disappears from the staff and customer apps (history is kept). Affects new transactions only in the UI.</p>
+      <S title="Modules — show or hide wallet, stamps, points" open>
+        <p className="xs muted">Switch a module off and it disappears from the staff and customer apps (history is kept).</p>
         <label className="spread sm" style={{ padding: '6px 0', cursor: 'pointer' }}><span><b>Wallet & top-ups</b></span><input type="checkbox" checked={modsF.wallet_on} onChange={e => setModsF({ ...modsF, wallet_on: e.target.checked })} /></label>
         <label className="spread sm" style={{ padding: '6px 0', cursor: 'pointer' }}><span><b>Stamp cards</b></span><input type="checkbox" checked={modsF.stamps_on} onChange={e => setModsF({ ...modsF, stamps_on: e.target.checked })} /></label>
         <label className="spread sm" style={{ padding: '6px 0', cursor: 'pointer' }}><span><b>Points & tiers</b></span><input type="checkbox" checked={modsF.points_on} onChange={e => setModsF({ ...modsF, points_on: e.target.checked })} /></label>
@@ -828,22 +824,30 @@ export default function Admin() {
         <div style={{ height: 12 }} /><button className="btn primary" onClick={addRule}>Add stamp rule</button>
       </S>
       <S title="Points & tiers">
-        <div className="row"><div className="grow"><label className="label">Points per ₹100 spent</label><input className="input" type="number" step="0.5" value={pcF.per100} onChange={e => setPcF({ ...pcF, per100: e.target.value })} /></div>
-          {['b0', 'b1', 'b2', 'b3'].map((k, i) => <div key={k} style={{ width: 80 }}><label className="label">{['Bronze', 'Silver', 'Gold', 'Platinum'][i]}</label><input className="input" type="number" value={pcF[k]} onChange={e => setPcF({ ...pcF, [k]: e.target.value })} /></div>)}</div>
+        <p className="xs muted">Customers earn points on every bill. Rewards below unlock at fixed point levels; tiers are status badges based on lifetime points.</p>
+        <div className="grow"><label className="label">Points earned per ₹100 spent</label><input className="input" type="number" step="0.5" value={pcF.per100} onChange={e => setPcF({ ...pcF, per100: e.target.value })} /></div>
+        <div className="row" style={{ marginTop: 8 }}>
+          {['b0', 'b1', 'b2', 'b3'].map((k, i) => <div key={k} className="grow"><label className="label">{['Bronze from', 'Silver from', 'Gold from', 'Platinum from'][i]} (pts)</label><input className="input" type="number" value={pcF[k]} onChange={e => setPcF({ ...pcF, [k]: e.target.value })} /></div>)}
+        </div>
         <div style={{ height: 12 }} /><button className="btn primary" onClick={savePoints}>Save points settings</button>
       </S>
-      <S title={`Points rewards (${rws.length})`}>
+      <S title={`Points rewards (${rws.length})`} open>
+        <p className="xs muted">Each reward unlocks when a customer's points reach the threshold. Staff give it free at the counter; points are deducted automatically. Shown on the customer's rewards page.</p>
         {rws.map(r => <div key={r.id} className="spread sm" style={{ padding: '6px 0' }}>
-          <span><b>{r.name}</b> — {r.required_points} pts, worth {inr(r.value_paise)}{r.max_per_customer ? `, max ${r.max_per_customer}×` : ''}</span>
+          <span><b>{r.name}</b> — at <b className="num">{r.required_points}</b> points{r.max_per_customer ? ` · max ${r.max_per_customer}× per customer` : ' · unlimited'}{r.description ? <div className="xs muted">{r.description}</div> : null}</span>
           <span className="row">
             <button className={'chip ' + (r.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={() => toggle('rewards', r.id, r.active)}>{r.active ? 'Active' : 'Off'}</button>
             <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delReward(r)}>Del</button>
           </span>
         </div>)}
-        <div className="row" style={{ marginTop: 8 }}><input className="input grow" placeholder="Reward name" value={rwF.name} onChange={e => setRwF({ ...rwF, name: e.target.value })} />
-          <input className="input" style={{ width: 110 }} type="number" placeholder="Points" value={rwF.required_points} onChange={e => setRwF({ ...rwF, required_points: e.target.value })} />
-          <input className="input" style={{ width: 110 }} type="number" placeholder="Worth ₹" value={rwF.value} onChange={e => setRwF({ ...rwF, value: e.target.value })} />
-          <input className="input" style={{ width: 80 }} type="number" placeholder="Max×" value={rwF.max} onChange={e => setRwF({ ...rwF, max: e.target.value })} /></div>
+        <label className="label">Reward name (e.g. Free ice cream)</label>
+        <input className="input" value={rwF.name} onChange={e => setRwF({ ...rwF, name: e.target.value })} />
+        <label className="label">Description shown to customers (optional)</label>
+        <input className="input" value={rwF.description} onChange={e => setRwF({ ...rwF, description: e.target.value })} placeholder="e.g. Any flavour, one scoop" />
+        <div className="row" style={{ marginTop: 4 }}>
+          <div className="grow"><label className="label">Points needed (e.g. 500)</label><input className="input" type="number" value={rwF.required_points} onChange={e => setRwF({ ...rwF, required_points: e.target.value })} /></div>
+          <div className="grow"><label className="label">Max times one customer can claim (0 = unlimited)</label><input className="input" type="number" value={rwF.max} onChange={e => setRwF({ ...rwF, max: e.target.value })} /></div>
+        </div>
         <div style={{ height: 12 }} /><button className="btn primary" onClick={addReward}>Add reward</button>
       </S>
     </div>}
@@ -858,7 +862,7 @@ export default function Admin() {
           <button className="chip" style={{ cursor: 'pointer' }} onClick={() => updStaff(s.id, { status: s.status === 'active' ? 'inactive' : 'active' })}>{s.status === 'active' ? 'Deactivate' : 'Activate'}</button>
         </span>
       </div>)}
-             <h3 style={{ marginTop: 14 }}>Add a team member</h3>
+      <h3 style={{ marginTop: 14 }}>Add a team member</h3>
       <p className="xs muted">Creates their login instantly — nothing to sign up on their side. They sign in with their phone number and the password you set, and can change it anytime from the Staff portal.</p>
       <div className="row" style={{ marginTop: 8 }}>
         <input className="input grow" placeholder="Full name" value={stF.name} onChange={e => setStF({ ...stF, name: e.target.value })} />
@@ -930,6 +934,31 @@ export default function Admin() {
       <input className="input" style={{ marginTop: 8 }} placeholder="Address" value={outF.address} onChange={e => setOutF({ ...outF, address: e.target.value })} />
       <input className="input" style={{ marginTop: 8 }} placeholder="Phone" value={outF.phone} onChange={e => setOutF({ ...outF, phone: e.target.value })} />
       <div style={{ height: 12 }} /><button className="btn primary" onClick={addOutlet}>Add outlet</button>
+    </div>}
+
+    {tab === 'settings' && <div className="card">
+      <h2>Restaurant branding</h2>
+      <p className="sm muted">Shown on the customer's loyalty page. Use a square logo (PNG/JPG) and a wide cover photo. Max 4 MB each.</p>
+      <div className="row" style={{ alignItems: 'flex-start', marginTop: 10 }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ width: 84, height: 84, borderRadius: '50%', border: '3px solid #E8E1D3', overflow: 'hidden', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+            {brandF.logo ? <img src={brandF.logo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span className="xs muted">No logo</span>}
+          </div>
+          <label className="btn slim" style={{ marginTop: 8, width: 'auto', cursor: 'pointer' }}>{brandBusy === 'logo' ? 'Uploading…' : 'Upload logo'}
+            <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => uploadBrand(e, 'logo')} />
+          </label>
+        </div>
+        <div className="grow">
+          <div style={{ height: 96, borderRadius: 12, border: '1px solid #E8E1D3', background: brandF.cover ? 'url(' + brandF.cover + ') center/cover' : '#F1ECE1' }} />
+          <label className="btn slim" style={{ marginTop: 8, width: 'auto', cursor: 'pointer' }}>{brandBusy === 'cover' ? 'Uploading…' : 'Upload cover photo'}
+            <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => uploadBrand(e, 'cover')} />
+          </label>
+        </div>
+      </div>
+      <label className="label">Rewards terms & conditions (shown under the rewards list)</label>
+      <textarea className="input" rows={4} value={brandF.terms} onChange={e => setBrandF({ ...brandF, terms: e.target.value })} placeholder={'e.g. Rewards are redeemable in-store only.\nOne reward per visit.\nManagement reserves the right to change offers.'} />
+      <div style={{ height: 10 }} />
+      <button className="btn primary" onClick={saveTerms}>Save terms</button>
     </div>}
   </div>
 }
