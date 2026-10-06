@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
-import { inr, fmtDate, errMsg } from '../lib/helpers'
+import { supabase } from '../../lib/supabase'
+import { inr, fmtDate, errMsg } from '../../lib/helpers'
 
 export default function Super() {
   const [phase, setPhase] = useState('loading')
@@ -28,10 +28,8 @@ export default function Super() {
     const { error } = await supabase.from('restaurants').insert({ name: f.name, slug: clean })
     if (error) return setErr(errMsg(error))
     if (f.email) {
-      const { error: e2 } = await supabase.rpc('add_staff', {
-        p_restaurant_id: (await supabase.from('restaurants').select('id').eq('slug', clean).single()).data.id,
-        p_email: f.email, p_role: 'owner',
-      })
+      const { data: r } = await supabase.from('restaurants').select('id').eq('slug', clean).single()
+      const { error: e2 } = await supabase.rpc('add_staff', { p_restaurant_id: r.id, p_email: f.email, p_role: 'owner' })
       if (e2) return setErr(errMsg(e2))
     }
     setMsg('Restaurant created.'); setF({ name: '', slug: '', email: '' }); load()
