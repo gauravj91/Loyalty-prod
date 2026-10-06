@@ -45,7 +45,11 @@ export default function CustomerPortal() {
       setSlug(slug || '')
       await load(cid)
       if (fb) setFbFor(fb)
-    } catch (e) { setErr(errMsg(e)); setStatus('need_link') }
+    }     } catch (e) {
+      const m = errMsg(e)
+      setErr(/anonym/i.test(m) ? 'This link could not be opened because guest access is switched off. The restaurant owner can enable it in Supabase: Authentication → Anonymous sign-ins.' : m)
+      setStatus('need_link')
+    }
   }
 
   async function load(cid) {
