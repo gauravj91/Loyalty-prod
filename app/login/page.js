@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useRouter } from 'next/navigation'
-import { errMsg } from '../../lib/helpers'
+import { errMsg, staffEmail } from '../../lib/helpers'
 
 export default function Login() {
   const r = useRouter()
