@@ -22,9 +22,11 @@ export default function Login() {
     setMode('create')
   }
 
-  async function signIn(e) {
+    async function signIn(e) {
     e.preventDefault(); setBusy(true); setErr(''); setMsg('')
-    const { error } = await supabase.auth.signInWithPassword({ email, password: pw })
+    const digits = email.replace(/\D/g, '').replace(/^0+/, '')
+    const loginEmail = (!email.includes('@') && digits.length === 10) ? staffEmail(digits) : email.trim()
+    const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password: pw })
     setBusy(false); if (error) return setErr(errMsg(error)); route()
   }
   async function signUpOwner(e) {
@@ -65,9 +67,9 @@ export default function Login() {
       </div>
       {err && <div className="err sm">{err}</div>}
       {msg && <div className="ok sm">{msg}</div>}
-      {mode === 'in' && <form onSubmit={signIn}>
-        <label className="label">Email</label>
-        <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
+            {mode === 'in' && <form onSubmit={signIn}>
+        <label className="label">Email or phone (staff)</label>
+        <input className="input" type="text" value={email} onChange={e => setEmail(e.target.value)} required />
         <label className="label">Password</label>
         <input className="input" type="password" value={pw} onChange={e => setPw(e.target.value)} required />
         <div style={{ height: 16 }} />
