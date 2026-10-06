@@ -11,14 +11,16 @@ export default function CustomerPortal() {
   const [err, setErr] = useState('')
   const [cust, setCust] = useState(null)
   const [mk, setMk] = useState(null)
+  const [mods, setMods] = useState({ wallet_on: true, stamps_on: true, points_on: true })
   const [rules, setRules] = useState([]); const [prog, setProg] = useState([])
   const [cfg, setCfg] = useState(null); const [rewards, setRewards] = useState([]); const [reds, setReds] = useState([])
-  const [txns, setTxns] = useState([]); const [orders, setOrders] = useState([])
+  const [txns, setTxns] = useState([]); const [orders, setOrders] = useState([]); const [stx, setStx] = useState([])
   const [open, setOpen] = useState(null); const [showQr, setShowQr] = useState(false)
   const [invite, setInvite] = useState(null)
   const [fbFor, setFbFor] = useState(null); const [fbStars, setFbStars] = useState(0)
   const [fbComment, setFbComment] = useState(''); const [fbDone, setFbDone] = useState(false)
   const [copied, setCopied] = useState(false); const [slug, setSlug] = useState('')
+
   useEffect(() => { boot() }, [])
 
   async function boot() {
@@ -38,7 +40,7 @@ export default function CustomerPortal() {
       if (error) throw error
       localStorage.setItem(LS, JSON.stringify({ slug, qr, secret }))
       setSlug(slug || '')
-      await load(cid)      
+      await load(cid)
       if (fb) setFbFor(fb)
     } catch (e) { setErr(errMsg(e)); setStatus('need_link') }
   }
@@ -48,7 +50,7 @@ export default function CustomerPortal() {
     if (c.error) throw c.error
     setCust(c.data)
     const rid = c.data.restaurant_id
-    const [ru, pr, cf, rw, rd, tx, or, mkq] = await Promise.all([
+    const [ru, pr, cf, rw, rd, tx, or, mkq, mdq, st] = await Promise.all([
       supabase.from('stamp_rules').select('*').eq('restaurant_id', rid).eq('active', true),
       supabase.from('customer_stamp_progress').select('*').eq('customer_id', cid),
       supabase.from('points_config').select('*').eq('restaurant_id', rid).maybeSingle(),
@@ -57,11 +59,14 @@ export default function CustomerPortal() {
       supabase.from('wallet_transactions').select('*').eq('customer_id', cid).order('created_at', { ascending: false }).limit(15),
       supabase.from('orders').select('*').eq('customer_id', cid).order('created_at', { ascending: false }).limit(10),
       supabase.from('marketing_config').select('*').eq('restaurant_id', rid).maybeSingle(),
+      supabase.from('modules_config').select('*').eq('restaurant_id', rid).maybeSingle(),
+      supabase.from('stamp_transactions').select('*, stamp_rules(name)').eq('customer_id', cid).order('created_at', { ascending: false }).limit(10),
     ])
     setRules(ru.data || []); setProg(pr.data || []); setCfg(cf.data)
     setRewards(rw.data || []); setReds(rd.data || [])
-    setTxns(tx.data || []); setOrders(or.data || [])
+    setTxns(tx.data || []); setOrders(or.data || []); setStx(st.data || [])
     setMk(mkq.data || null)
+    if (mdq.data) setMods(mdq.data)
     setStatus('ready')
   }
 
@@ -104,13 +109,14 @@ export default function CustomerPortal() {
     </div>
   </div>
 
-  const t = tierFor(cust.lifetime_points, cfg?.tiers)
-  const nt = nextTierFor(cust.lifetime_points, cfg?.tiers)
-  const ready = rewards.filter(r => cust.points_balance >= r.required_points && (r.max_per_customer === 0 || reds.filter(x => x.reward_id === r.id).length < r.max_per_customer))
+  const t = mods.points_on ? tierFor(cust.lifetime_points, cfg?.tiers) : null
+  const nt = mods.points_on ? nextTierFor(cust.lifetime_points, cfg?.tiers) : null
+  const ready = mods.points_on ? rewards.filter(r => cust.points_balance >= r.required_points && (r.max_per_customer === 0 || reds.filter(x => x.reward_id === r.id).length < r.max_per_customer)) : []
   const activity = [
     ...orders.map(o => ({ at: o.created_at, kind: 'order', o })),
     ...txns.filter(x => x.type === 'topup' || x.type === 'adjustment').map(x => ({ at: x.created_at, kind: 'wallet', x })),
-  ].sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 10)
+    ...stx.map(x => ({ at: x.created_at, kind: 'stamp', x })),
+  ].sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 12)
   const inviteLink = (typeof window !== 'undefined' ? window.location.origin : '') + '/customer?slug=' + slug + '&ref=' + cust.referral_code
   const shareTxt = (mk && mk.referrer_paise > 0
     ? 'Join ' + (cust.restaurants?.name || 'this restaurant') + ' with my code ' + cust.referral_code + ' — we both get ' + inr(mk.referrer_paise) + ' in wallet credit. Open this link and show the code at the counter: ' + inviteLink
@@ -126,13 +132,13 @@ export default function CustomerPortal() {
     </div>
     {err && <div className="err sm">{err}</div>}
 
-    <div className="card">
+    {mods.wallet_on && <div className="card">
       <div className="xs muted">WALLET BALANCE</div>
       <div className="big num">{inr(cust.wallet_balance_paise)}</div>
       <div className="xs muted" style={{ marginTop: 6 }}>Show your QR at the counter to pay from this balance.</div>
-    </div>
+    </div>}
 
-    <div className="card">
+    {mods.points_on && <div className="card">
       <div className="spread">
         <div><div className="xs muted">POINTS</div><div className="big num">{cust.points_balance}</div></div>
         <span className={'chip t-' + (t?.name || 'Bronze')}>{t?.name || 'Bronze'}</span>
@@ -141,22 +147,9 @@ export default function CustomerPortal() {
       {ready.length > 0 && <div style={{ marginTop: 12 }}>
         {ready.map(r => <div key={r.id} className="chip g" style={{ margin: '2px 4px 2px 0' }}>You can claim: {r.name}</div>)}
       </div>}
-    </div>
-
-    {cust.referral_code && <div className="card">
-      <h2>Refer a friend</h2>
-      <p className="sm muted" style={{ marginTop: 4 }}>
-        {mk && mk.referrer_paise > 0
-          ? 'Share your code — when they join, you get ' + inr(mk.referrer_paise) + ' and they get ' + inr(mk.referee_paise) + ' in wallet credit.'
-          : 'Share your code — when they join and quote it at the counter, you both get wallet credit.'}
-      </p>
-      <div className="spread" style={{ marginTop: 8 }}>
-        <b style={{ fontSize: 24, letterSpacing: 4 }}>{cust.referral_code}</b>
-        <a className="btn slim primary" target="_blank" rel="noreferrer" href={'https://wa.me/?text=' + encodeURIComponent(shareTxt)}>Share on WhatsApp</a>
-      </div>
     </div>}
 
-    {rules.length > 0 && <div className="card">
+    {mods.stamps_on && rules.length > 0 && <div className="card">
       <h2>My stamp cards</h2>
       {rules.map(r => {
         const p = prog.find(x => x.stamp_rule_id === r.id)
@@ -179,6 +172,11 @@ export default function CustomerPortal() {
               <span><b className="num">{inr(a.o.total_paise)}</b> <span className="muted">bill</span>{a.o.points_earned > 0 && <span className="chip a" style={{ marginLeft: 6 }}>+{a.o.points_earned} pts</span>}</span>
               <span className="muted xs">{fmtDate(a.at)}</span>
             </div>
+          : a.kind === 'stamp'
+          ? <div className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
+              <span><b className="num">{a.x.reward_redeemed ? 'reward' : '+' + a.x.stamps_awarded}</b> <span className="muted">{a.x.reward_redeemed ? 'redeemed · ' : 'stamp' + (a.x.stamps_awarded > 1 ? 's' : '') + ' · '}{a.x.stamp_rules?.name}</span></span>
+              <span className="muted xs">{fmtDate(a.at)}</span>
+            </div>
           : <div className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
               <span><b className="num">{a.x.amount_paise > 0 ? '+' : ''}{inr(a.x.amount_paise)}</b> <span className="muted">{a.x.type === 'topup' ? 'wallet top-up' : (a.x.note || 'adjustment')}</span></span>
               <span className="muted xs">{fmtDate(a.at)}</span>
@@ -190,8 +188,21 @@ export default function CustomerPortal() {
       </div>)}
     </div>
 
+    {cust.referral_code && <div className="card">
+      <h2>Refer a friend</h2>
+      <p className="sm muted" style={{ marginTop: 4 }}>
+        {mk && mk.referrer_paise > 0
+          ? 'Share your code — when they join, you get ' + inr(mk.referrer_paise) + ' and they get ' + inr(mk.referee_paise) + ' in wallet credit.'
+          : 'Share your code — when they join and quote it at the counter, you both get wallet credit.'}
+      </p>
+      <div className="spread" style={{ marginTop: 8 }}>
+        <b style={{ fontSize: 24, letterSpacing: 4 }}>{cust.referral_code}</b>
+        <a className="btn slim primary" target="_blank" rel="noreferrer" href={'https://wa.me/?text=' + encodeURIComponent(shareTxt)}>Share on WhatsApp</a>
+      </div>
+    </div>}
+
     <button className="btn primary btn-lg" onClick={() => setShowQr(true)}>Show my QR code</button>
-    <p className="muted sm" style={{ textAlign: 'center', marginTop: 8 }}>Show this at the counter to earn stamps, points and use your wallet.</p>
+    <p className="muted sm" style={{ textAlign: 'center', marginTop: 8 }}>Show this at the counter to earn rewards and use your wallet.</p>
 
     {showQr && <div className="overlay" onClick={() => setShowQr(false)}>
       <div className="modal" onClick={e => e.stopPropagation()}>
