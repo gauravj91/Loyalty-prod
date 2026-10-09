@@ -46,6 +46,18 @@ export default function Login() {
     setMsg('Login created. Now ask your manager to add you under Admin → Staff, then sign in.')
     setMode('in')
   }
+    async function forgotPw() {
+    setErr(''); setMsg('')
+    const v = email.trim()
+    if (!v) return setErr('Enter your email (or phone) in the box above first.')
+    if (v.includes('@')) {
+      const { error } = await supabase.auth.resetPasswordForEmail(v, { redirectTo: window.location.origin + '/reset' })
+      if (error) return setErr(errMsg(error))
+      setMsg('Reset link sent to ' + v + ' — check your inbox (and spam).')
+    } else {
+      setMsg('Phone logins are reset by the restaurant manager: Admin → Staff → "Reset pw" next to your name.')
+    }
+  }
   async function createResto(e) {
     e.preventDefault(); setBusy(true); setErr('')
     const clean = slug.toLowerCase().replace(/[^a-z0-9-]/g, '')
@@ -74,6 +86,8 @@ export default function Login() {
         <input className="input" type="password" value={pw} onChange={e => setPw(e.target.value)} required />
         <div style={{ height: 16 }} />
         <button className="btn primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <div style={{ height: 8 }} />
+        <button type="button" className="btn slim" onClick={forgotPw}>Forgot password?</button>
       </form>}
       {mode === 'owner' && <form onSubmit={signUpOwner}>
         <label className="label">Restaurant name</label>
