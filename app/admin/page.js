@@ -383,6 +383,13 @@ export default function Admin() {
     })
     error ? setErr(errMsg(error)) : flash('Staff added'); setStF({ email: '', role: 'staff', name: '', phone: '', pw: '' }); loadStaff()
   }
+    async function resetStaffPw(s) {
+    const p = prompt('Set a new starting password for ' + (s.name || 'this member') + ' (8+ characters). Share it with them — they can change it from the Staff portal.')
+    if (!p) return
+    if (p.length < 8) return setErr('Password must be at least 8 characters.')
+    const { error } = await supabase.functions.invoke('reset-staff-password', { body: { target_user_id: s.user_id, new_password: p } })
+    error ? setErr(errMsg(error)) : flash('Password reset for ' + (s.name || 'member'))
+  }
   async function updStaff(id, vals) { await supabase.from('restaurant_users').update(vals).eq('id', id); loadStaff() }
 
   async function searchCusts(s) {
@@ -690,8 +697,8 @@ export default function Admin() {
           <span className="num muted">{inr(m.price_paise)}{m.cost_paise != null ? ' · cost ' + inr(m.cost_paise) + ' · margin ' + Math.round((m.price_paise - m.cost_paise) / m.price_paise * 100) + '%' : ''}</span></span>
         <span className="row">
           <button className={'chip ' + (m.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={async () => { await supabase.from('menu_items').update({ active: !m.active }).eq('id', m.id); loadMenu() }}>{m.active ? 'Active' : 'Off'}</button>
-          <button className="chip" style={{ cursor: 'pointer' }} onClick={() => editItem(m)}>Edit</button>
-          <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delItem(m)}>Del</button>
+          <button className="chip" style={{ cursor: 'pointer' }} onClick={() => resetStaffPw(s)}>Reset pw</button>
+          <button className="chip" style={{ cursor: 'pointer' }} onClick={() => updStaff(s.id, { status: s.status === 'active' ? 'inactive' : 'active' })}>{s.status === 'active' ? 'Deactivate' : 'Activate'}</button>          <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delItem(m)}>Del</button>
         </span>
       </div>)}
     </div>}
