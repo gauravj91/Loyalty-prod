@@ -28,7 +28,7 @@ export default function Staff() {
   const [tab, setTab] = useState('bill')
   const [phone, setPhone] = useState('')
   const [nc, setNc] = useState({ name: '', phone: '', birth: '', anniv: '', ref: '' })
-  const [link, setLink] = useState(null)
+  const [link, setLink] = useState(null); const [copied, setCopied] = useState(false)
   const idemRef = useRef(null)
 
   useEffect(() => { (async () => {
@@ -229,7 +229,10 @@ export default function Staff() {
     setResult({ kind: 'bday', amount: data.amount_paise, balance: data.balance_after })
     loadCustomer(cust)
   }
-
+  function showLink() {
+    setCopied(false)
+    setLink({ url: customerLink(rest.slug, cust.qr_code, cust.qr_secret), phone: cust.phone })
+  }
   async function changePw() {
     const p = prompt('Choose a new password (at least 8 characters)')
     if (!p) return
@@ -249,8 +252,9 @@ export default function Staff() {
     })
     setBusy(false)
     if (error) return setErr(errMsg(error))
-    setLink({ url: customerLink(rest.slug, data.qr_code, data.qr_secret) })
-    const ph = nc.phone
+    const ph = nc.phone.trim()
+    setCopied(false)
+    setLink({ url: customerLink(rest.slug, data.qr_code, data.qr_secret), phone: ph })
     setNc({ name: '', phone: '', birth: '', anniv: '', ref: '' })
     findCustomer({ term: ph })
   }
@@ -274,7 +278,10 @@ export default function Staff() {
         <h1>{rest.name}</h1>
       </span>
       <span className="row">
-        {me && me.role !== 'staff' && <button className="btn slim" onClick={() => { window.location.href = '/admin' }}>Admin view</button>}
+        {me && me.role !== 'staff' && <b          <span className="row">
+            <button className="btn slim" onClick={showLink}>Send link</button>
+            <button className="btn slim" onClick={() => { setCust(null); setItems([]); setQuickAmt('') }}>Change</button>
+          </span>}
         <button className="btn slim" onClick={changePw}>Password</button>
         <button className="btn slim" onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}>Log out</button>
       </span>
@@ -572,17 +579,17 @@ export default function Staff() {
       </div>
     </div>}
 
-    {link && <div className="overlay" onClick={() => setLink(null)}>
+        {link && <div className="overlay" onClick={() => setLink(null)}>
       <div className="modal" onClick={e => e.stopPropagation()}>
-        <h2>Customer created</h2>
-        <p className="sm muted">Customer scans or photographs this QR. It is their portal link and their loyalty card.</p>
-        <div style={{ padding: 16 }}><QRCodeSVG value={link.url} size={220} /></div>
-        <p className="xs muted" style={{ wordBreak: 'break-all' }}>{link.url}</p>
-        <div style={{ height: 12 }} />
-        <button className="btn" onClick={() => navigator.clipboard?.writeText(link.url)}>Copy link</button>
-        <div style={{ height: 8 }} />
+        <h2>Customer loyalty link</h2>
+        <p className="sm muted" style={{ marginTop: 4 }}>Opens their wallet, stamp cards, points and QR. Send it on WhatsApp or copy it — they should bookmark it.</p>
+        <input className="input" readOnly value={link.url} onFocus={e => e.target.select()} style={{ fontSize: 12 }} />
+        <div className="row" style={{ marginTop: 8 }}>
+          <button className="btn slim grow" onClick={() => { navigator.clipboard?.writeText(link.url); setCopied(true) }}>{copied ? 'Copied ✓' : 'Copy link'}</button>
+          {link.phone && <a className="btn slim primary grow" target="_blank" rel="noreferrer" href={'https://wa.me/' + (() => { let d = String(link.phone).replace(/\D/g, ''); if (d.length === 12 && d.startsWith('91')) d = d.slice(2); if (d.length === 10) d = '91' + d; return d })() + '?text=' + encodeURIComponent('Welcome to ' + (rest?.name || 'us') + '! This is your loyalty page — open it and show it at the counter to earn rewards and use your wallet: ' + link.url)}>Send on WhatsApp</a>}
+        </div>
+        <div style={{ padding: 16 }}><QRCodeSVG value={link.url} size={190} /></div>
         <button className="btn primary" onClick={() => setLink(null)}>Done</button>
       </div>
     </div>}
-  </div>
 }
