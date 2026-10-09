@@ -229,10 +229,12 @@ export default function Staff() {
     setResult({ kind: 'bday', amount: data.amount_paise, balance: data.balance_after })
     loadCustomer(cust)
   }
+
   function showLink() {
     setCopied(false)
     setLink({ url: customerLink(rest.slug, cust.qr_code, cust.qr_secret), phone: cust.phone })
   }
+
   async function changePw() {
     const p = prompt('Choose a new password (at least 8 characters)')
     if (!p) return
@@ -278,10 +280,7 @@ export default function Staff() {
         <h1>{rest.name}</h1>
       </span>
       <span className="row">
-        {me && me.role !== 'staff' && <b          <span className="row">
-            <button className="btn slim" onClick={showLink}>Send link</button>
-            <button className="btn slim" onClick={() => { setCust(null); setItems([]); setQuickAmt('') }}>Change</button>
-          </span>}
+        {me && me.role !== 'staff' && <button className="btn slim" onClick={() => { window.location.href = '/admin' }}>Admin view</button>}
         <button className="btn slim" onClick={changePw}>Password</button>
         <button className="btn slim" onClick={async () => { await supabase.auth.signOut(); window.location.href = '/login' }}>Log out</button>
       </span>
@@ -314,7 +313,10 @@ export default function Staff() {
             <div style={{ fontWeight: 800, fontSize: 18 }}>{cust.name || 'Customer'}</div>
             <div className="muted sm num">{cust.phone}</div>
           </div>
-          <button className="btn slim" onClick={() => { setCust(null); setItems([]); setQuickAmt('') }}>Change</button>
+          <span className="row">
+            <button className="btn slim" onClick={showLink}>Send link</button>
+            <button className="btn slim" onClick={() => { setCust(null); setItems([]); setQuickAmt('') }}>Change</button>
+          </span>
         </div>
         {isBday && <div className="ok sm" style={{ marginTop: 10 }}>
           Birthday today! {mods.wallet_on && mk && mk.birthday_paise > 0
@@ -579,7 +581,7 @@ export default function Staff() {
       </div>
     </div>}
 
-        {link && <div className="overlay" onClick={() => setLink(null)}>
+    {link && <div className="overlay" onClick={() => setLink(null)}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <h2>Customer loyalty link</h2>
         <p className="sm muted" style={{ marginTop: 4 }}>Opens their wallet, stamp cards, points and QR. Send it on WhatsApp or copy it — they should bookmark it.</p>
@@ -592,4 +594,5 @@ export default function Staff() {
         <button className="btn primary" onClick={() => setLink(null)}>Done</button>
       </div>
     </div>}
+  </div>
 }
