@@ -17,7 +17,7 @@ export default function Staff() {
   const [rewards, setRewards] = useState([]); const [redCount, setRedCount] = useState({})
   const [recent, setRecent] = useState([])
   const [results, setResults] = useState(null)
-  const [orders, setOrders] = useState([]); const [wtx, setWtx] = useState([]); const [stx, setStx] = useState([])
+  const [orders, setOrders] = useState([]); const [wtx, setWtx] = useState([]); const [stx, setStx] = useState([]); const [ptx, setPtx] = useState([])
   const [rules, setRules] = useState([]); const [stampQty, setStampQty] = useState({})
   const [items, setItems] = useState([]); const [quickMode, setQuickMode] = useState(false); const [quickAmt, setQuickAmt] = useState('')
   const [f, setF] = useState({ name: '', category: '', qty: '1', price: '' })
@@ -47,7 +47,9 @@ export default function Staff() {
       supabase.from('marketing_config').select('*').eq('restaurant_id', rid).maybeSingle(),
       supabase.from('modules_config').select('*').eq('restaurant_id', rid).maybeSingle(),
     ])
-    setOutlets(outs.data || []); if (outs.data?.length) setOutletId(outs.data[0].id)
+    const assigned = ru[0].outlet_ids || []
+    const mine = assigned.length ? (outs.data || []).filter(o => assigned.includes(o.id)) : (outs.data || [])
+    setOutlets(mine); if (mine.length) setOutletId(mine[0].id)
     setScheme(sch.data?.[0] || null)
     setRules(sr.data || [])
     setMenu(mn.data || [])
@@ -60,7 +62,7 @@ export default function Staff() {
     setCust(c); setResult(null); setItems([]); setWalletAmt('')
     setRewardSel(null); setStampSel(null); setTab('bill'); setErr(''); setResults(null)
     const rid = c.restaurant_id
-    const [cf2, pr, cf, rw, rd, ro, wt, st] = await Promise.all([
+    const [cf2, pr, cf, rw, rd, ro, wt, st, pt] = await Promise.all([
       supabase.from('customers').select('*').eq('id', c.id).single(),
       supabase.from('customer_stamp_progress').select('*, stamp_rules(name, required_count, reward_type, reward_value, reward_label, target_value)').eq('customer_id', c.id),
       supabase.from('points_config').select('*').eq('restaurant_id', rid).maybeSingle(),
@@ -69,10 +71,11 @@ export default function Staff() {
       supabase.from('orders').select('*').eq('restaurant_id', rid).eq('customer_id', c.id).order('created_at', { ascending: false }).limit(15),
       supabase.from('wallet_transactions').select('*').eq('customer_id', c.id).order('created_at', { ascending: false }).limit(10),
       supabase.from('stamp_transactions').select('*, stamp_rules(name)').eq('customer_id', c.id).order('created_at', { ascending: false }).limit(10),
+      supabase.from('points_transactions').select('*').eq('customer_id', c.id).order('created_at', { ascending: false }).limit(20),
     ])
     if (cf2.data) setCust(cf2.data)
     setProg(pr.data || []); setCfg(cf.data); setRewards(rw.data || [])
-    setOrders(ro.data || []); setWtx(wt.data || []); setStx(st.data || [])
+    setOrders(ro.data || []); setWtx(wt.data || []); setStx(st.data || []); setPtx(pt.data || [])
     const counts = {}; (rd.data || []).forEach(x => counts[x.reward_id] = (counts[x.reward_id] || 0) + 1)
     setRedCount(counts)
     const seen = {}; const list = []
@@ -137,11 +140,9 @@ export default function Staff() {
   const maxWallet = () => mods.wallet_on ? Math.min(cust?.wallet_balance_paise || 0, estTotal()) : 0
   const unlocked = () => mods.stamps_on ? prog.filter(p => Math.floor(p.stamps_earned / p.stamp_rules.required_count) - (p.rewards_redeemed || 0) > 0) : []
   const affordable = () => mods.points_on ? rewards.filter(r => cust && cust.points_balance >= r.required_points && (r.max_per_customer === 0 || (redCount[r.id] || 0) < r.max_per_customer)) : []
-  const isBday = (() => {
-    if (!cust?.birth_date) return false
-    const d = new Date(cust.birth_date + 'T00:00:00'); const t = new Date()
-    return d.getDate() === t.getDate() && d.getMonth() === t.getMonth()
-  })()
+  const sameDay = ds => { if (!ds) return false; const d = new Date(ds + 'T00:00:00'); const t = new Date(); return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() }
+  const isBday = sameDay(cust?.birth_date)
+  const isAnniv = sameDay(cust?.anniversary_date)
   const topBonus = scheme && toPaise(topAmt) > 0 ? Math.floor(toPaise(topAmt) * scheme.bonus_pct / 100) : 0
   const topCredit = toPaise(topAmt) + topBonus
 
@@ -150,6 +151,14 @@ export default function Staff() {
     if (rule.reward_type === 'free_item')
       setItems(xs => [...xs, { name: rule.reward_label || ('Free ' + rule.target_value), category: rule.target_value, qty: 1, unit_price_paise: 0, cost_paise: null, free: true }])
     setStampSel(p.stamp_rule_id); setRewardSel(null)
+  }
+  function removeItem(i) {
+    const removed = items[i]
+    setItems(items.filter((_, j) => j !== i))
+    if (removed?.free) {
+      if (rewardSel) { const r = rewards.find(x => x.id === rewardSel); if (r && removed.name === r.name) setRewardSel(null) }
+      if (stampSel) { const p = prog.find(x => x.stamp_rule_id === stampSel); if (p && removed.name === (p.stamp_rules.reward_label || 'Free ' + p.stamp_rules.target_value)) setStampSel(null) }
+    }
   }
 
   async function submitOrder() {
@@ -218,15 +227,15 @@ export default function Staff() {
     loadCustomer(cust)
   }
 
-  async function claimBday() {
-    if (!confirm('Credit the birthday bonus to ' + (cust.name || 'this customer') + '? Once per year.')) return
+  async function creditOccasion(kind) {
+    const label = kind === 'bday' ? 'birthday' : 'anniversary'
+    if (!confirm('Credit the ' + label + ' bonus to ' + (cust.name || 'this customer') + '? Once per year.')) return
     setBusy(true); setErr('')
-    const { data, error } = await supabase.rpc('claim_birthday', {
-      p_restaurant_id: me.restaurant_id, p_customer_id: cust.id,
-    })
+    const fn = kind === 'bday' ? 'claim_birthday' : 'claim_anniversary'
+    const { data, error } = await supabase.rpc(fn, { p_restaurant_id: me.restaurant_id, p_customer_id: cust.id })
     setBusy(false)
     if (error) return setErr(errMsg(error))
-    setResult({ kind: 'bday', amount: data.amount_paise, balance: data.balance_after })
+    setResult({ kind: 'credit', title: label[0].toUpperCase() + label.slice(1) + ' credit given', amount: data.amount_paise, balance: data.balance_after })
     loadCustomer(cust)
   }
 
@@ -286,11 +295,12 @@ export default function Staff() {
       </span>
     </div>
     <div className="spread" style={{ marginBottom: 14 }}>
-      {outlets.length > 1
-        ? <select className="select" style={{ width: 'auto' }} value={outletId} onChange={e => setOutletId(e.target.value)}>
-            {outlets.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </select>
-        : <span className="chip">{outlets[0]?.name || 'No outlet'}</span>}
+      <span className="xs muted">YOUR OUTLET</span>
+      {outlets.length === 0 && <span className="chip r">No outlet — ask the admin to add one</span>}
+      {outlets.length === 1 && <span className="chip ink">{outlets[0].name}</span>}
+      {outlets.length > 1 && <select className="select" style={{ width: 'auto' }} value={outletId} onChange={e => setOutletId(e.target.value)}>
+        {outlets.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>}
     </div>
 
     <div className="card">
@@ -318,9 +328,12 @@ export default function Staff() {
             <button className="btn slim" onClick={() => { setCust(null); setItems([]); setQuickAmt('') }}>Change</button>
           </span>
         </div>
-        {isBday && <div className="ok sm" style={{ marginTop: 10 }}>
-          Birthday today! {mods.wallet_on && mk && mk.birthday_paise > 0
-            ? <button className="btn slim primary" style={{ marginLeft: 8 }} disabled={busy} onClick={claimBday}>Credit {inr(mk.birthday_paise)} birthday bonus</button>
+        {(isBday || isAnniv) && <div className="ok sm" style={{ marginTop: 10 }}>
+          {isBday ? 'Birthday' : 'Anniversary'} today!{' '}
+          {mods.wallet_on && mk && (isBday ? mk.birthday_paise > 0 : mk.anniversary_paise > 0)
+            ? <button className="btn slim primary" style={{ marginLeft: 8 }} disabled={busy} onClick={() => creditOccasion(isBday ? 'bday' : 'anniv')}>
+                Credit {inr(isBday ? mk.birthday_paise : mk.anniversary_paise)} {(isBday ? 'birthday' : 'anniversary')} bonus
+              </button>
             : 'Treat them to something on the house.'}
         </div>}
         <div className="row" style={{ marginTop: 12 }}>
@@ -416,7 +429,7 @@ export default function Staff() {
           {items.map((it, i) => <div key={i} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
             <span>{it.free ? <span className="chip g">FREE</span> : null} {it.name} × {it.qty}</span>
             <span className="num">{inr(it.qty * it.unit_price_paise)}
-              <button className="btn slim danger" style={{ marginLeft: 8, padding: '2px 8px' }} onClick={() => setItems(xs => xs.filter((_, j) => j !== i))}>✕</button>
+              <button className="btn slim danger" style={{ marginLeft: 8, padding: '2px 8px' }} onClick={() => removeItem(i)}>✕</button>
             </span>
           </div>)}
           <div className="spread" style={{ marginTop: 10, fontWeight: 800 }}>
@@ -474,7 +487,7 @@ export default function Staff() {
       {mods.stamps_on && tab === 'stamps' && <div className="card">
         <h2>Stamp cards</h2>
         <p className="sm muted">Add stamps manually — for paper card migration or a missed scan. Every add is logged in History with your name.</p>
-        {rules.length === 0 && <p className="sm muted">No stamp rules configured yet — the admin adds them under Admin, Offers.</p>}
+        {rules.length === 0 && <p className="sm muted">No stamp rules configured yet.</p>}
         {rules.map(r => {
           const p = prog.find(x => x.stamp_rule_id === r.id)
           const earned = p?.stamps_earned || 0
@@ -509,8 +522,9 @@ export default function Staff() {
             </div>
           }
           const o = h.o
+          const pt = ptx.find(p => p.order_id === o.id)
           return <div key={o.id} style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
-            <div className="spread sm"><span><b className="num">{inr(o.total_paise)}</b> <span className="muted">bill</span>{mods.points_on && o.points_earned > 0 && <span className="chip a" style={{ marginLeft: 6 }}>+{o.points_earned} pts</span>}{(o.rewards || []).map(rw => <span key={rw.reward_id} className="chip g" style={{ marginLeft: 6 }}>offer: {rw.name}</span>)}{o.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {o.created_by_name}</span>}</span><span className="muted xs">{fmtDate(o.created_at)}</span></div>
+            <div className="spread sm"><span><b className="num">{inr(o.total_paise)}</b> <span className="muted">bill</span>{mods.points_on && o.points_earned > 0 && <span className="chip a" style={{ marginLeft: 6 }}>+{o.points_earned} pts</span>}{(o.rewards || []).map(rw => <span key={rw.reward_id} className="chip g" style={{ marginLeft: 6 }}>offer: {rw.name}</span>)}{mods.points_on && pt && <span className="chip" style={{ marginLeft: 6 }}>pts +{pt.points_earned}{pt.points_redeemed ? ' −' + pt.points_redeemed : ''} · bal {pt.balance_after}</span>}{o.created_by_name && <span className="chip" style={{ marginLeft: 6 }}>by {o.created_by_name}</span>}</span><span className="muted xs">{fmtDate(o.created_at)}</span></div>
             <div className="xs muted">{(o.items || []).map(it => `${it.name} ×${it.qty}${it.free ? '(free)' : ''}`).join(', ')}</div>
             <div className="xs muted num">{mods.wallet_on ? 'Wallet ' + inr(o.wallet_paid_paise) + ' · ' : ''}{o.payment_method} {inr(o.other_paid_paise)}</div>
           </div>
@@ -550,9 +564,9 @@ export default function Staff() {
               <p>Card total: <b className="num">{result.total}</b> stamps</p>
               {result.unlocked > 0 && <div className="ok sm" style={{ marginTop: 8 }}>{result.unlocked} reward ready — apply it on the next bill.</div>}
             </>
-          : result.kind === 'bday'
+          : result.kind === 'credit'
           ? <>
-              <h2>Birthday credit given</h2>
+              <h2>{result.title}</h2>
               <p>Added <b className="num">{inr(result.amount)}</b> to the wallet.</p>
               <p className="sm muted">New balance <b className="num">{inr(result.balance)}</b></p>
             </>
@@ -569,6 +583,8 @@ export default function Staff() {
               <div className="spread sm"><span>Collect now</span><b className="num">{inr(result.other_paid_paise)}</b></div>
               {cust && mods.wallet_on && <div className="spread sm"><span>Wallet balance</span><b className="num">{inr(result.wallet_balance_after)}</b></div>}
               {cust && mods.points_on && <div className="spread sm"><span>Points earned</span><b className="num">+{result.points_earned}</b> (balance {result.points_balance_after})</div>}
+              {mods.points_on && (result.rewards || []).map(rw =>
+                <div key={rw.reward_id} className="ok sm" style={{ marginTop: 8 }}>Offer applied: {rw.name} — points deducted</div>)}
               {mods.stamps_on && (result.stamps || []).filter(s => s.unlocked_now > 0).map(s =>
                 <div key={s.rule_id} className="ok sm" style={{ marginTop: 8 }}>Stamp card reward unlocked — customer now has {s.unlocked_now} free reward(s).</div>)}
               {cust && result.order_id && <>
