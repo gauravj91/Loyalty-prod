@@ -47,8 +47,10 @@ function OutletTable({ rows }) {
 export default function Admin() {
   const [err, setErr] = useState(''); const [msg, setMsg] = useState(''); const [loadErr, setLoadErr] = useState('')
   const [rest, setRest] = useState(null); const [tab, setTab] = useState('overview')
-  const [range, setRange] = useState(6); const [stats, setStats] = useState(null); const [ordersRaw, setOrdersRaw] = useState([]); const [wtxRaw, setWtxRaw] = useState([])
+  const [range, setRange] = useState(6); const [customFrom, setCustomFrom] = useState(''); const [customTo, setCustomTo] = useState('')
+  const [stats, setStats] = useState(null); const [ordersRaw, setOrdersRaw] = useState([]); const [wtxRaw, setWtxRaw] = useState([])
   const [outletNames, setOutletNames] = useState({})
+  const [meId, setMeId] = useState('')
   const [ws, setWs] = useState(null); const [wsF, setWsF] = useState({ name: 'Wallet offer', min: '500', bonus: '10', cap: '' })
   const [rules, setRules] = useState([]); const [ruleF, setRuleF] = useState({ name: '', target_type: 'item', target_value: '', required_count: '10', reward_type: 'free_item', reward_value: '1', reward_label: '' })
   const [pc, setPc] = useState(null); const [pcF, setPcF] = useState({ per100: '1', active: true, b0: '0', b1: '500', b2: '1000', b3: '2500' })
@@ -56,13 +58,14 @@ export default function Admin() {
   const [staff, setStaff] = useState([]); const [stF, setStF] = useState({ email: '', role: 'staff', name: '', phone: '', pw: '' })
   const [q, setQ] = useState(''); const [custs, setCusts] = useState([]); const [sel, setSel] = useState(null)
   const [adjF, setAdjF] = useState({ amount: '', reason: '' }); const [link, setLink] = useState(null)
+  const [cF, setCF] = useState({ name: '', phone: '', birth: '', anniv: '' })
   const [outs, setOuts] = useState([]); const [outF, setOutF] = useState({ name: '', address: '', phone: '' })
   const [campSeg, setCampSeg] = useState('all'); const [campPts, setCampPts] = useState(100)
   const [campMsg, setCampMsg] = useState('Hi {name}! We miss you — visit us this week and treat yourself.'); const [campList, setCampList] = useState(null)
   const [campIdx, setCampIdx] = useState(0); const [sentIds, setSentIds] = useState([])
-  const [menu, setMenu] = useState([]); const [miF, setMiF] = useState({ id: null, name: '', category: '', price: '', cost: '', active: true })
-  const [mk, setMk] = useState(null); const [mkF, setMkF] = useState({ referrer: '100', referee: '100', birthday: '0' })
-  const [bdays, setBdays] = useState([]); const [annivs, setAnnivs] = useState([]); const [claims, setClaims] = useState(new Set())
+  const [menu, setMenu] = useState([]); const [miF, setMiF] = useState({ id: null, name: '', category: '', price: '', active: true, cost_paise: null })
+  const [mk, setMk] = useState(null); const [mkF, setMkF] = useState({ referrer: '100', referee: '100', birthday: '0', anniversary: '0' })
+  const [bdays, setBdays] = useState([]); const [annivs, setAnnivs] = useState([]); const [claims, setClaims] = useState(new Set()); const [annClaims, setAnnClaims] = useState(new Set())
   const [fbList, setFbList] = useState([])
   const [todo, setTodo] = useState(null)
   const [mods, setMods] = useState({ wallet_on: true, stamps_on: true, points_on: true }); const [modsF, setModsF] = useState({ wallet_on: true, stamps_on: true, points_on: true })
@@ -71,6 +74,7 @@ export default function Admin() {
   useEffect(() => { (async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { window.location.href = '/login'; return }
+    setMeId(session.user.id)
     const { data: ru, error: ruErr } = await supabase.from('restaurant_users')
       .select('*, restaurants(*)').eq('user_id', session.user.id).limit(1)
     if (ruErr) { setLoadErr(errMsg(ruErr)); return }
@@ -80,7 +84,7 @@ export default function Admin() {
   })() }, [])
 
   useEffect(() => { if (!rest) return; loadOffers(); loadStaff(); loadOutlets() }, [rest])
-  useEffect(() => { if (rest && tab === 'overview') { loadStats(); loadTodo() } }, [rest, tab, range])
+  useEffect(() => { if (rest && (tab === 'overview' || tab === 'books')) { loadStats(); if (tab === 'overview') loadTodo() } }, [rest, tab, range, customFrom, customTo])
   useEffect(() => { if (rest && tab === 'customers') searchCusts('') }, [rest, tab])
   useEffect(() => { if (rest && tab === 'campaigns') buildCampaign() }, [rest, tab, campSeg, campPts])
   useEffect(() => { if (rest && tab === 'menu') loadMenu() }, [rest, tab])
@@ -119,7 +123,7 @@ export default function Admin() {
 
   async function loadTodo() {
     const t0 = dayStart(0), y0 = dayStart(1)
-    const [cs, fbq, fbid, orq, wtq, oidle, mkq] = await Promise.all([
+    const [cs, fbq, fbid, orq, wtq, oidle, mkq, acq] = await Promise.all([
       supabase.from('customers').select('id, name, phone, birth_date, anniversary_date, qr_code, qr_secret').eq('restaurant_id', rest.id).limit(500),
       supabase.from('feedback').select('stars, order_id, created_at, customers(name)').eq('restaurant_id', rest.id).gte('created_at', dayStart(6)).order('created_at', { ascending: false }).limit(50),
       supabase.from('feedback').select('order_id').eq('restaurant_id', rest.id).gte('created_at', dayStart(6)),
@@ -127,6 +131,7 @@ export default function Admin() {
       supabase.from('wallet_transactions').select('amount_paise, payment_method, created_at').eq('restaurant_id', rest.id).eq('type', 'topup').gte('created_at', y0),
       supabase.from('orders').select('customer_id, created_at').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(1000),
       supabase.from('marketing_config').select('*').eq('restaurant_id', rest.id).maybeSingle(),
+      supabase.from('anniversary_claims').select('customer_id').eq('restaurant_id', rest.id).eq('year', new Date().getFullYear()),
     ])
     if (mkq.data) setMk(mkq.data)
     const todayMid = new Date(); todayMid.setHours(0, 0, 0, 0)
@@ -148,7 +153,7 @@ export default function Admin() {
     const lastVisit = {}
     ;(oidle.data || []).forEach(o => { if (o.customer_id && !lastVisit[o.customer_id]) lastVisit[o.customer_id] = o.created_at })
     const idle = rows.filter(c => { const lv = lastVisit[c.id]; return !lv || (Date.now() - new Date(lv).getTime()) > 14 * 86400000 }).length
-    setTodo({ ySales: yOrds.reduce((s, o) => s + o.total_paise, 0), yBills: yOrds.length, yCash, bdays, annivs, bad, noFb, idle, cMap })
+    setTodo({ ySales: yOrds.reduce((s, o) => s + o.total_paise, 0), yBills: yOrds.length, yCash, bdays, annivs, bad, noFb, idle, cMap, annClaimed: new Set((acq.data || []).map(x => x.customer_id)) })
   }
   async function creditBday(c) {
     if (!confirm('Credit the birthday bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
@@ -156,13 +161,23 @@ export default function Admin() {
     error ? setErr(errMsg(error)) : flash('Birthday credit given')
     loadTodo()
   }
+  async function creditAnniv(c) {
+    if (!confirm('Credit the anniversary bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
+    const { error } = await supabase.rpc('claim_anniversary', { p_restaurant_id: rest.id, p_customer_id: c.id })
+    error ? setErr(errMsg(error)) : flash('Anniversary credit given')
+    loadTodo()
+  }
   function waNum(p) { let d = (p || '').replace(/\D/g, ''); if (d.length === 10) d = '91' + d; return d }
 
   async function loadStats() {
-    const from = dayStart(range)
+    const isCustom = range === 'custom'
+    const from = isCustom ? (customFrom ? new Date(customFrom + 'T00:00:00').toISOString() : dayStart(29)) : dayStart(range)
+    const toIso = isCustom && customTo ? new Date(customTo + 'T23:59:59').toISOString() : null
+    let qo = supabase.from('orders').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false })
+    let qw = supabase.from('wallet_transactions').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false })
+    if (toIso) { qo = qo.lte('created_at', toIso); qw = qw.lte('created_at', toIso) }
     const [o, w, cb, ol] = await Promise.all([
-      supabase.from('orders').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false }),
-      supabase.from('wallet_transactions').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false }),
+      qo, qw,
       supabase.from('customers').select('id, wallet_balance_paise, created_at').eq('restaurant_id', rest.id),
       supabase.from('outlets').select('id, name').eq('restaurant_id', rest.id),
     ])
@@ -188,10 +203,19 @@ export default function Admin() {
     ords.forEach(x => { const k = x.created_by_name || '—'; const r = byStaff[k] = byStaff[k] || { bills: 0, sales: 0, wallet: 0 }; r.bills++; r.sales += x.total_paise; r.wallet += x.wallet_paid_paise })
     const staffRows = Object.entries(byStaff).map(([name, v]) => ({ name, bills: v.bills, sales: v.sales, wallet: v.wallet, avg: v.bills ? Math.round(v.sales / v.bills) : 0 })).sort((a, b) => b.sales - a.sales)
 
-    const days = range === 0 ? 1 : range + 1
     const dkey = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
     const series = []
-    for (let i = days - 1; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); series.push({ key: dkey(d), label: d.getDate() + '', revenue: 0, bills: 0 }) }
+    if (isCustom && customFrom && customTo) {
+      let d = new Date(customFrom + 'T00:00:00')
+      const end = new Date(customTo + 'T00:00:00')
+      while (d <= end && series.length < 90) {
+        series.push({ key: dkey(d), label: d.getDate() + '', revenue: 0, bills: 0 })
+        d.setDate(d.getDate() + 1)
+      }
+    } else {
+      const days = typeof range === 'number' ? (range === 0 ? 1 : range + 1) : 0
+      for (let i = days - 1; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); series.push({ key: dkey(d), label: d.getDate() + '', revenue: 0, bills: 0 }) }
+    }
     const dayMap = {}; series.forEach(s => dayMap[s.key] = s)
     ords.forEach(x => { const s = dayMap[dkey(new Date(x.created_at))]; if (s) { s.revenue += x.total_paise; s.bills++ } })
 
@@ -229,15 +253,16 @@ export default function Admin() {
   }
 
   async function loadMenu() {
-    const { data } = await supabase.from('menu_items').select('*').eq('restaurant_id', rest.id).order('category').order('name')
+    const { data } = await supabase.from('menu_items').select('*').eq('restaurant_id', rest.id).order('created_at', { ascending: false })
     setMenu(data || [])
   }
   async function loadMarketing() {
     const y = new Date().getFullYear(); const m = new Date().getMonth()
-    const [mkq, cs, bc, fb] = await Promise.all([
+    const [mkq, cs, bc, ac, fb] = await Promise.all([
       supabase.from('marketing_config').select('*').eq('restaurant_id', rest.id).maybeSingle(),
       supabase.from('customers').select('id, name, phone, birth_date, anniversary_date, referral_code').eq('restaurant_id', rest.id).limit(500),
       supabase.from('birthday_claims').select('customer_id').eq('restaurant_id', rest.id).eq('year', y),
+      supabase.from('anniversary_claims').select('customer_id').eq('restaurant_id', rest.id).eq('year', y),
       supabase.from('feedback').select('*, customers(name)').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(30),
     ])
     setMk(mkq.data || null)
@@ -245,8 +270,10 @@ export default function Admin() {
       referrer: String((mkq.data?.referrer_paise ?? 10000) / 100),
       referee: String((mkq.data?.referee_paise ?? 10000) / 100),
       birthday: String((mkq.data?.birthday_paise ?? 0) / 100),
+      anniversary: String((mkq.data?.anniversary_paise ?? 0) / 100),
     })
     setClaims(new Set((bc.data || []).map(x => x.customer_id)))
+    setAnnClaims(new Set((ac.data || []).map(x => x.customer_id)))
     setFbList(fb.data || [])
     const rows = (cs.data || []).map(c => ({ ...c, _b: c.birth_date ? new Date(c.birth_date + 'T00:00:00') : null, _a: c.anniversary_date ? new Date(c.anniversary_date + 'T00:00:00') : null }))
     setBdays(rows.filter(c => c._b && c._b.getMonth() === m).sort((a, b) => a._b.getDate() - b._b.getDate()))
@@ -347,7 +374,9 @@ export default function Admin() {
       restaurant_id: rest.id, name: rwF.name.trim(), description: rwF.description.trim() || null,
       required_points: parseInt(rwF.required_points || 0), value_paise: 0, max_per_customer: parseInt(rwF.max || 0),
     })
-    error ? setErr(errMsg(error)) : flash('Reward added')
+    if (error) return setErr(errMsg(error))
+    alert('Reward "' + rwF.name.trim() + '" added — customers unlock it at ' + rwF.required_points + ' points.')
+    flash('Reward added')
     setRwF({ name: '', description: '', required_points: '500', max: '1' }); loadOffers()
   }
   const toggle = async (table, id, active) => {
@@ -383,14 +412,14 @@ export default function Admin() {
     })
     error ? setErr(errMsg(error)) : flash('Staff added'); setStF({ email: '', role: 'staff', name: '', phone: '', pw: '' }); loadStaff()
   }
-    async function resetStaffPw(s) {
+  async function updStaff(id, vals) { await supabase.from('restaurant_users').update(vals).eq('id', id); loadStaff() }
+  async function resetStaffPw(s) {
     const p = prompt('Set a new starting password for ' + (s.name || 'this member') + ' (8+ characters). Share it with them — they can change it from the Staff portal.')
     if (!p) return
     if (p.length < 8) return setErr('Password must be at least 8 characters.')
     const { error } = await supabase.functions.invoke('reset-staff-password', { body: { target_user_id: s.user_id, new_password: p } })
     error ? setErr(errMsg(error)) : flash('Password reset for ' + (s.name || 'member'))
   }
-  async function updStaff(id, vals) { await supabase.from('restaurant_users').update(vals).eq('id', id); loadStaff() }
 
   async function searchCusts(s) {
     setQ(s)
@@ -400,6 +429,17 @@ export default function Admin() {
       ? await query.or(`phone.ilike.%${clean}%,name.ilike.%${clean}%`)
       : await query
     setCusts(data || [])
+  }
+  async function addCustomerAdmin() {
+    if (!cF.name.trim() || cF.name.trim().length < 2) return setErr('Enter the customer name.')
+    if (!cF.phone || cF.phone.trim().length < 8) return setErr('Enter a valid phone number.')
+    const { error } = await supabase.rpc('create_customer', {
+      p_restaurant_id: rest.id, p_phone: cF.phone.trim(), p_name: cF.name.trim(),
+      p_birth_date: cF.birth || null, p_anniversary_date: cF.anniv || null,
+    })
+    if (error) return setErr(errMsg(error))
+    flash('Customer added — send them their link from the Staff portal (select them → Send link).')
+    setCF({ name: '', phone: '', birth: '', anniv: '' }); searchCusts('')
   }
   async function openCust(c) {
     const [pr, ords] = await Promise.all([
@@ -468,15 +508,15 @@ export default function Admin() {
   }
 
   async function saveItem() {
-    const vals = { name: miF.name.trim(), category: miF.category.trim() || null, price_paise: toPaise(miF.price), cost_paise: miF.cost ? toPaise(miF.cost) : null, active: miF.active }
+    const vals = { name: miF.name.trim(), category: miF.category.trim() || null, price_paise: toPaise(miF.price), cost_paise: miF.cost_paise ?? null, active: miF.active }
     if (!vals.name) return setErr('Item name is required.')
     const { error } = miF.id
       ? await supabase.from('menu_items').update(vals).eq('id', miF.id)
       : await supabase.from('menu_items').insert({ ...vals, restaurant_id: rest.id })
     error ? setErr(errMsg(error)) : flash(miF.id ? 'Item updated' : 'Item added')
-    setMiF({ id: null, name: '', category: '', price: '', cost: '', active: true }); loadMenu()
+    setMiF({ id: null, name: '', category: '', price: '', active: true, cost_paise: null }); loadMenu()
   }
-  function editItem(m) { setMiF({ id: m.id, name: m.name, category: m.category || '', price: String(m.price_paise / 100), cost: m.cost_paise != null ? String(m.cost_paise / 100) : '', active: m.active }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+  function editItem(m) { setMiF({ id: m.id, name: m.name, category: m.category || '', price: String(m.price_paise / 100), active: m.active, cost_paise: m.cost_paise }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
   async function delItem(m) {
     if (!confirm('Delete "' + m.name + '" from the menu? Past bills are not affected.')) return
     const { error } = await supabase.from('menu_items').delete().eq('id', m.id)
@@ -484,7 +524,7 @@ export default function Admin() {
   }
 
   async function saveMk() {
-    const vals = { referrer_paise: toPaise(mkF.referrer), referee_paise: toPaise(mkF.referee), birthday_paise: toPaise(mkF.birthday) }
+    const vals = { referrer_paise: toPaise(mkF.referrer), referee_paise: toPaise(mkF.referee), birthday_paise: toPaise(mkF.birthday), anniversary_paise: toPaise(mkF.anniversary) }
     const { error } = mk
       ? await supabase.from('marketing_config').update(vals).eq('restaurant_id', rest.id)
       : await supabase.from('marketing_config').insert({ ...vals, restaurant_id: rest.id })
@@ -494,6 +534,11 @@ export default function Admin() {
     if (!confirm('Credit the birthday bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
     const { error } = await supabase.rpc('claim_birthday', { p_restaurant_id: rest.id, p_customer_id: c.id })
     error ? setErr(errMsg(error)) : flash('Birthday credit given'); loadMarketing()
+  }
+  async function claimAnnivAdmin(c) {
+    if (!confirm('Credit the anniversary bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
+    const { error } = await supabase.rpc('claim_anniversary', { p_restaurant_id: rest.id, p_customer_id: c.id })
+    error ? setErr(errMsg(error)) : flash('Anniversary credit given'); loadMarketing(); loadTodo()
   }
 
   const ledgerRows = [
@@ -507,6 +552,15 @@ export default function Admin() {
 
   const fbAvg = fbList.length ? (fbList.reduce((s, f) => s + f.stars, 0) / fbList.length).toFixed(1) : null
   const marginPct = stats && stats.revKnown > 0 ? Math.round((stats.revKnown - stats.costKnown) / stats.revKnown * 100) : null
+  const rangeSelect = <>
+    <select className="select" style={{ width: 'auto' }} value={String(range)} onChange={e => setRange(e.target.value === 'custom' ? 'custom' : parseInt(e.target.value))}>
+      <option value="0">Today</option><option value="6">Last 7 days</option><option value="29">Last 30 days</option><option value="custom">Custom</option>
+    </select>
+    {range === 'custom' && <>
+      <input className="input" style={{ width: 140 }} type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
+      <input className="input" style={{ width: 140 }} type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} />
+    </>}
+  </>
 
   return <div className="wrap wide">
     <div className="spread" style={{ marginBottom: 14 }}>
@@ -543,9 +597,12 @@ export default function Admin() {
         </details>}
         {todo.annivs.length > 0 && <details className="sec">
           <summary>Anniversaries — next 7 days ({todo.annivs.length})</summary>
-          {todo.annivs.map(c => <div key={c.id} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
-            <span><b>{c.name || 'Customer'}</b> <span className="muted xs">{c._o.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span></span>
-            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/' + waNum(c.phone) + '?text=' + encodeURIComponent('Happy anniversary, ' + (c.name || 'friend') + '! Celebrate with us at ' + rest.name + ' this week?')}>Wish</a>
+          {todo.annivs.map(c => <div key={c.id} className="spread" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1', gap: 8 }}>
+            <span className="grow"><b>{c.name || 'Customer'}</b> <span className="muted xs">{c._o.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span></span>
+            <span className="row">
+              <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/' + waNum(c.phone) + '?text=' + encodeURIComponent('Happy anniversary, ' + (c.name || 'friend') + '! Celebrate with us at ' + rest.name + ' this week?')}>Wish</a>
+              {mk && mk.anniversary_paise > 0 && !todo.annClaimed.has(c.id) && <button className="btn slim primary" onClick={() => creditAnniv(c)}>Credit {inr(mk.anniversary_paise)}</button>}
+            </span>
           </div>)}
         </details>}
         {todo.bad.length > 0 && <details className="sec">
@@ -573,9 +630,7 @@ export default function Admin() {
       <div className="card">
         <div className="spread">
           <h2>Performance</h2>
-          <select className="select" style={{ width: 'auto' }} value={range} onChange={e => setRange(parseInt(e.target.value))}>
-            <option value="0">Today</option><option value="6">Last 7 days</option><option value="29">Last 30 days</option>
-          </select>
+          {rangeSelect}
         </div>
         {stats && <>
           <div className="row" style={{ marginTop: 8, flexWrap: 'wrap' }}>
@@ -633,11 +688,9 @@ export default function Admin() {
 
     {tab === 'books' && <>
       <div className="card">
-        <div className="spread">
+        <div className="spread" style={{ flexWrap: 'wrap' }}>
           <h2>Accounts</h2>
-          <select className="select" style={{ width: 'auto' }} value={range} onChange={e => setRange(parseInt(e.target.value))}>
-            <option value="0">Today</option><option value="6">Last 7 days</option><option value="29">Last 30 days</option>
-          </select>
+          {rangeSelect}
         </div>
         {stats && <>
           <table className="t"><tbody>
@@ -647,8 +700,8 @@ export default function Admin() {
             <tr><td><b>Wallet top-ups received (cash in)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.topupCash)}</b></td></tr>
             <tr><td className="muted">— bonus credit given free</td><td className="num" style={{ textAlign: 'right' }}>−{inr(stats.bonusGiven)}</td></tr>
             {stats.revKnown > 0 && <>
-              <tr><td className="muted">— food cost on priced items (from menu costs)</td><td className="num" style={{ textAlign: 'right' }}>−{inr(stats.costKnown)}</td></tr>
-              <tr><td><b>Gross margin on priced items{marginPct != null ? ' (' + marginPct + '%)' : ''}</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.revKnown - stats.costKnown)}</b></td></tr>
+              <tr><td className="muted">— food cost on items with recorded cost</td><td className="num" style={{ textAlign: 'right' }}>−{inr(stats.costKnown)}</td></tr>
+              <tr><td><b>Gross margin on those items{marginPct != null ? ' (' + marginPct + '%)' : ''}</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.revKnown - stats.costKnown)}</b></td></tr>
             </>}
             <tr><td><b>Cash to reconcile (cash sales + cash top-ups)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.cashHandover)}</b></td></tr>
             <tr><td className="muted">Wallet liability owed to customers (current)</td><td className="num" style={{ textAlign: 'right' }}>{inr(stats.walletLiability)}</td></tr>
@@ -656,7 +709,7 @@ export default function Admin() {
             <tr><td><b>Sales − bonus credits (indicative)</b></td><td className="num" style={{ textAlign: 'right' }}><b>{inr(stats.revenue - stats.bonusGiven)}</b></td></tr>
           </tbody></table>
           <p className="xs muted" style={{ marginTop: 10 }}>
-            Margin is exact only for menu items with a cost price set (custom/free items are excluded from that line — set costs under Menu to widen coverage). Bonus credits are the marketing cost of the wallet offer. Export the ledger below for your accountant.
+            Margin appears only for bills whose items have a cost price recorded. Bonus credits are the marketing cost of the wallet offer. Export the ledger below for your accountant.
           </p>
           <h3 style={{ marginTop: 16 }}>By outlet</h3>
           <OutletTable rows={stats.outlets} />
@@ -681,36 +734,38 @@ export default function Admin() {
 
     {tab === 'menu' && <div className="card">
       <div className="spread"><h2>Menu</h2><a className="btn slim" href="/admin/import">Import from PDF</a></div>
-      <p className="sm muted">One-tap billing for staff. Cost price (optional) unlocks true gross margin in Books — staff never see costs.</p>
+      <p className="sm muted">One-tap billing for staff. Newest items appear at the top.</p>
       <div className="row"><input className="input grow" placeholder="Item name" value={miF.name} onChange={e => setMiF({ ...miF, name: e.target.value })} />
         <input className="input" style={{ width: 110 }} placeholder="Category" value={miF.category} onChange={e => setMiF({ ...miF, category: e.target.value })} /></div>
       <div className="row" style={{ marginTop: 8 }}>
-        <input className="input" style={{ width: 110 }} type="number" step="0.01" placeholder="Price ₹" value={miF.price} onChange={e => setMiF({ ...miF, price: e.target.value })} />
-        <input className="input" style={{ width: 110 }} type="number" step="0.01" placeholder="Cost ₹ (opt.)" value={miF.cost} onChange={e => setMiF({ ...miF, cost: e.target.value })} />
+        <input className="input" style={{ width: 130 }} type="number" step="0.01" placeholder="Price ₹" value={miF.price} onChange={e => setMiF({ ...miF, price: e.target.value })} />
         <button className="btn slim primary" onClick={saveItem}>{miF.id ? 'Update item' : 'Add item'}</button>
-        {miF.id && <button className="btn slim" onClick={() => setMiF({ id: null, name: '', category: '', price: '', cost: '', active: true })}>Cancel</button>}
+        {miF.id && <button className="btn slim" onClick={() => setMiF({ id: null, name: '', category: '', price: '', active: true, cost_paise: null })}>Cancel</button>}
       </div>
       <div style={{ height: 12 }} />
       {menu.length === 0 && <p className="sm muted">No items yet — add your top sellers first, or import a PDF above.</p>}
       {menu.map(m => <div key={m.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
         <span><b>{m.name}</b> <span className="muted">{m.category}</span><br />
-          <span className="num muted">{inr(m.price_paise)}{m.cost_paise != null ? ' · cost ' + inr(m.cost_paise) + ' · margin ' + Math.round((m.price_paise - m.cost_paise) / m.price_paise * 100) + '%' : ''}</span></span>
+          <span className="num muted">{inr(m.price_paise)}</span></span>
         <span className="row">
           <button className={'chip ' + (m.active ? 'g' : 'r')} style={{ cursor: 'pointer' }} onClick={async () => { await supabase.from('menu_items').update({ active: !m.active }).eq('id', m.id); loadMenu() }}>{m.active ? 'Active' : 'Off'}</button>
-          <button className="chip" style={{ cursor: 'pointer' }} onClick={() => resetStaffPw(s)}>Reset pw</button>
-          <button className="chip" style={{ cursor: 'pointer' }} onClick={() => updStaff(s.id, { status: s.status === 'active' ? 'inactive' : 'active' })}>{s.status === 'active' ? 'Deactivate' : 'Activate'}</button>          <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delItem(m)}>Del</button>
+          <button className="chip" style={{ cursor: 'pointer' }} onClick={() => editItem(m)}>Edit</button>
+          <button className="chip r" style={{ cursor: 'pointer' }} onClick={() => delItem(m)}>Del</button>
         </span>
       </div>)}
     </div>}
 
     {tab === 'marketing' && <>
       <div className="card">
-        <h2>Rewards & occasions</h2>
-        <p className="sm muted">Referral bonuses credit both wallets the moment staff enters the friend's code. Birthday credit is once per customer per year.</p>
-        <div className="row">
-          <div className="grow"><label className="label">Referrer gets ₹</label><input className="input" type="number" value={mkF.referrer} onChange={e => setMkF({ ...mkF, referrer: e.target.value })} /></div>
-          <div className="grow"><label className="label">New friend gets ₹</label><input className="input" type="number" value={mkF.referee} onChange={e => setMkF({ ...mkF, referee: e.target.value })} /></div>
-          <div className="grow"><label className="label">Birthday credit ₹ (0 = off)</label><input className="input" type="number" value={mkF.birthday} onChange={e => setMkF({ ...mkF, birthday: e.target.value })} /></div>
+        <h2>Rewards & occasions <span className={'chip ' + (mk ? 'g' : 'a')}>{mk ? 'Active' : 'Not set up yet'}</span></h2>
+        <p className="sm muted">Nothing is credited until you save values here. Referral = when a new customer joins with a friend's code, both wallets get credited instantly. Birthday/Anniversary = one wallet credit per customer per year, given at the counter or from the Today card.</p>
+        <div className="row" style={{ flexWrap: 'wrap' }}>
+          <div className="grow" style={{ minWidth: 150 }}><label className="label">Referrer gets ₹</label><input className="input" type="number" value={mkF.referrer} onChange={e => setMkF({ ...mkF, referrer: e.target.value })} /><div className="xs muted">Existing customer's credit when someone joins with their code</div></div>
+          <div className="grow" style={{ minWidth: 150 }}><label className="label">New friend gets ₹</label><input className="input" type="number" value={mkF.referee} onChange={e => setMkF({ ...mkF, referee: e.target.value })} /><div className="xs muted">Credit to the newcomer on joining</div></div>
+        </div>
+        <div className="row" style={{ flexWrap: 'wrap', marginTop: 4 }}>
+          <div className="grow" style={{ minWidth: 150 }}><label className="label">Birthday credit ₹ (0 = off)</label><input className="input" type="number" value={mkF.birthday} onChange={e => setMkF({ ...mkF, birthday: e.target.value })} /><div className="xs muted">Once per customer per year</div></div>
+          <div className="grow" style={{ minWidth: 150 }}><label className="label">Anniversary credit ₹ (0 = off)</label><input className="input" type="number" value={mkF.anniversary} onChange={e => setMkF({ ...mkF, anniversary: e.target.value })} /><div className="xs muted">Same, for anniversaries</div></div>
         </div>
         <div style={{ height: 12 }} /><button className="btn primary" onClick={saveMk}>Save settings</button>
       </div>
@@ -726,9 +781,13 @@ export default function Admin() {
           </span>
         </div>)}
         <h3 style={{ marginTop: 14 }}>Anniversaries this month ({annivs.length})</h3>
-        {annivs.map(c => <div key={c.id} className="spread sm" style={{ padding: '6px 0', borderBottom: '1px solid #F1ECE1' }}>
-          <span><b>{c.name || 'Customer'}</b> <span className="muted num">{c.phone}</span></span>
-          <span className="muted xs">{c._a.getDate() + ' ' + c._a.toLocaleString('en', { month: 'long' })}</span>
+        {annivs.map(c => <div key={c.id} className="spread" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', gap: 8 }}>
+          <span className="grow"><b>{c.name || 'Customer'}</b> <span className="muted num sm">{c.phone}</span>
+            <div className="xs muted">{c._a.getDate() + ' ' + c._a.toLocaleString('en', { month: 'long' })}{annClaims.has(c.id) ? ' · credit given this year' : ''}</div></span>
+          <span className="row">
+            {mk && mk.anniversary_paise > 0 && !annClaims.has(c.id) && <button className="btn slim primary" onClick={() => claimAnnivAdmin(c)}>Credit {inr(mk.anniversary_paise)}</button>}
+            <a className="btn slim" target="_blank" rel="noreferrer" href={'https://wa.me/' + waNum(c.phone) + '?text=' + encodeURIComponent('Happy anniversary, ' + (c.name || 'friend') + '! Celebrate with us at ' + rest.name + ' this week?')}>Wish</a>
+          </span>
         </div>)}
         {annivs.length === 0 && <p className="sm muted">None recorded.</p>}
       </div>
@@ -861,13 +920,24 @@ export default function Admin() {
 
     {tab === 'staff' && <div className="card">
       <h2>Staff & roles</h2>
-      {staff.map(s => <div key={s.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1' }}>
-        <span><b>{s.name || s.role}</b> <span className="muted">({s.role})</span> {s.status !== 'active' && <span className="chip r">inactive</span>}</span>
-        <span className="row">
-          <select className="select" style={{ width: 120, padding: '6px 8px' }} value={s.role} onChange={e => updStaff(s.id, { role: e.target.value })}>
-            <option value="owner">owner</option><option value="manager">manager</option><option value="staff">staff</option></select>
-          <button className="chip" style={{ cursor: 'pointer' }} onClick={() => updStaff(s.id, { status: s.status === 'active' ? 'inactive' : 'active' })}>{s.status === 'active' ? 'Deactivate' : 'Activate'}</button>
-        </span>
+      {staff.map(s => <div key={s.id} style={{ padding: '10px 0', borderBottom: '1px solid #F1ECE1' }}>
+        <div className="spread sm">
+          <span><b>{s.name || s.role}</b> <span className="muted">({s.role})</span> {s.status !== 'active' && <span className="chip r">inactive</span>}
+            <div className="xs muted">{s.login_email || 'login email not recorded'}</div></span>
+          {s.user_id === meId
+            ? <span className="chip">You</span>
+            : <span className="row" style={{ flexWrap: 'wrap' }}>
+                <select className="select" style={{ width: 108, padding: '6px 8px' }} value={s.role} onChange={e => updStaff(s.id, { role: e.target.value })}>
+                  <option value="owner">owner</option><option value="manager">manager</option><option value="staff">staff</option>
+                </select>
+                <select className="select" style={{ width: 140, padding: '6px 8px' }} value={(s.outlet_ids && s.outlet_ids[0]) || ''} onChange={e => updStaff(s.id, { outlet_ids: e.target.value ? [e.target.value] : [] })} title="Outlet mapping: empty = all outlets">
+                  <option value="">All outlets</option>
+                  {outs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+                <button className="chip" style={{ cursor: 'pointer' }} onClick={() => resetStaffPw(s)}>Reset pw</button>
+                <button className="chip" style={{ cursor: 'pointer' }} onClick={() => updStaff(s.id, { status: s.status === 'active' ? 'inactive' : 'active' })}>{s.status === 'active' ? 'Deactivate' : 'Activate'}</button>
+              </span>}
+        </div>
       </div>)}
       <h3 style={{ marginTop: 14 }}>Add a team member</h3>
       <p className="xs muted">Creates their login instantly — nothing to sign up on their side. They sign in with their phone number and the password you set, and can change it anytime from the Staff portal.</p>
@@ -894,11 +964,22 @@ export default function Admin() {
     {tab === 'customers' && <div className="card">
       <h2>Customers {custs.length > 0 && <span className="muted sm">({custs.length}{q.length < 2 ? ' most recent' : ' found'})</span>}</h2>
       <input className="input" placeholder="Search phone or name" value={q} onChange={e => searchCusts(e.target.value)} />
+      <details className="sec"><summary className="sm">＋ Add a customer</summary>
+        <div className="row" style={{ marginTop: 8 }}>
+          <input className="input grow" placeholder="Name" value={cF.name} onChange={e => setCF({ ...cF, name: e.target.value })} />
+          <input className="input" style={{ width: 150 }} type="tel" placeholder="Phone" value={cF.phone} onChange={e => setCF({ ...cF, phone: e.target.value })} />
+        </div>
+        <div className="row" style={{ marginTop: 8 }}>
+          <div className="grow"><label className="label">Birthday</label><input className="input" type="date" value={cF.birth} onChange={e => setCF({ ...cF, birth: e.target.value })} /></div>
+          <div className="grow"><label className="label">Anniversary</label><input className="input" type="date" value={cF.anniv} onChange={e => setCF({ ...cF, anniv: e.target.value })} /></div>
+        </div>
+        <div style={{ height: 8 }} /><button className="btn slim primary" onClick={addCustomerAdmin}>Create customer</button>
+      </details>
       {custs.map(c => <div key={c.id} className="spread sm" style={{ padding: '8px 0', borderBottom: '1px solid #F1ECE1', cursor: 'pointer' }} onClick={() => openCust(c)}>
         <span><b>{c.name || 'Customer'}</b> <span className="muted num">{c.phone}</span></span>
         <span className="row"><span className="chip">{inr(c.wallet_balance_paise)}</span><span className="chip a">{c.points_balance} pts</span></span>
       </div>)}
-      {custs.length === 0 && <p className="sm muted">No customers yet — they are created at the counter in the Staff portal.</p>}
+      {custs.length === 0 && <p className="sm muted">No customers yet — add one above or at the counter in the Staff portal.</p>}
       {sel && <div className="overlay" onClick={() => setSel(null)}>
         <div className="modal" style={{ textAlign: 'left' }} onClick={e => e.stopPropagation()}>
           <h2>{sel.name || 'Customer'}</h2>
