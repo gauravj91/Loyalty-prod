@@ -31,9 +31,11 @@ export default function CustomerPortal() {
     let slug = q.get('slug'), qr = q.get('qr'), secret = q.get('k')
     const ref = q.get('ref'), fb = q.get('fb')
     if (ref) setInvite(ref.toUpperCase())
-    if (!qr) {
-      const saved = JSON.parse(localStorage.getItem(LS) || 'null')
-      if (saved) ({ slug, qr, secret } = saved)
+        if (!qr) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(LS) || 'null')
+        if (saved) ({ slug, qr, secret } = saved)
+      } catch (e) { try { localStorage.removeItem(LS) } catch (e2) {} }
     }
     if (!qr) return setStatus('need_link')
     try {
@@ -121,7 +123,8 @@ export default function CustomerPortal() {
   const t = mods.points_on ? tierFor(cust.lifetime_points, cfg?.tiers) : null
   const ppr = cfg?.points_per_rupee || 0
   const earnPts = ppr > 0 ? Math.round(ppr * 100 * 10) / 10 : 0
-  const canClaim = mods.points_on ? rewards.filter(r => cust.points_balance >= r.required_points) : []
+  const redCounts = {}; reds.forEach(x => { redCounts[x.reward_id] = (redCounts[x.reward_id] || 0) + 1 })
+  const canClaim = mods.points_on ? rewards.filter(r => cust.points_balance >= r.required_points && (r.max_per_customer === 0 || (redCounts[r.id] || 0) < r.max_per_customer)) : []
   const next = mods.points_on ? rewards.filter(r => r.required_points > cust.points_balance)[0] : null
   const nextRupees = next && ppr > 0 ? Math.ceil((next.required_points - cust.points_balance) / ppr) : null
   const nextPct = next ? Math.min(100, Math.round(cust.points_balance / next.required_points * 100)) : 0
@@ -180,16 +183,18 @@ export default function CustomerPortal() {
       </div>}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
         {rewards.map(r => {
-          const has = cust.points_balance >= r.required_points
-          return <div key={r.id} style={{ background: has ? 'rgba(224,122,74,.16)' : 'rgba(255,255,255,.06)', border: has ? '1.5px solid #E07A4A' : '1px solid rgba(255,255,255,.14)', borderRadius: 14, padding: 12 }}>
+          const maxedOut = r.max_per_customer > 0 && (redCounts[r.id] || 0) >= r.max_per_customer
+          const has = cust.points_balance >= r.required_points && !maxedOut
+            return <div key={r.id} style={{ background: has ? 'rgba(224,122,74,.16)' : 'rgba(255,255,255,.06)', border: has ? '1.5px solid #E07A4A' : '1px solid rgba(255,255,255,.14)', borderRadius: 14, padding: 12 }}>
             <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: '-.01em' }}>
               {r.required_points}<span style={{ fontSize: 10.5, fontWeight: 800, opacity: .75, marginLeft: 4 }}>PTS</span>
               {!has && <Lock />}
             </div>
             <div style={{ fontWeight: 700, marginTop: 4, fontSize: 13.5 }}>{r.name}</div>
             {r.description && <div className="xs" style={{ opacity: has ? .85 : .6, marginTop: 2 }}>{r.description}</div>}
-            {has && <div className="xs" style={{ color: '#F0A57E', fontWeight: 800, marginTop: 6 }}>Ready — ask at the counter</div>}
-          </div>
+            {cust.points_balance >= r.required_points && maxedOut
+              ? <div className="xs" style={{ opacity: .5, marginTop: 6 }}>Fully claimed</div>
+              : has && <div className="xs" style={{ color: '#F0A57E', fontWeight: 800, marginTop: 6 }}>Ready — ask at the counter</div>}          </div>
         })}
       </div>
       {rest_.rewards_terms && <details style={{ marginTop: 16 }}>
