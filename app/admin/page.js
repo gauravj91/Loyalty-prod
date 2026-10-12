@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { supabase } from '../../lib/supabase'
-import { inr, toPaise, fmtDate, dayStart, tierFor, errMsg, customerLink, downloadCsv, staffEmail } from '../../lib/helpers'
+import { inr, toPaise, fmtDate, dayStart, tierFor, errMsg, customerLink, downloadCsv, staffEmail, fetchAll } from '../../lib/helpers'
 
 const S = ({ title, children, open }) => (
   <details className="sec" open={open}><summary>{title}</summary><div style={{ paddingTop: 10 }}>{children}</div></details>
@@ -118,18 +118,19 @@ export default function Admin() {
     const { error } = await supabase.rpc('update_branding', {
       p_restaurant_id: rest.id, p_logo_url: brandF.logo, p_cover_url: brandF.cover, p_rewards_terms: brandF.terms,
     })
-    error ? setErr(errMsg(error)) : flash('Terms saved')
+    if (error) return setErr(errMsg(error))
+    flash('Terms saved')
   }
 
   async function loadTodo() {
     const t0 = dayStart(0), y0 = dayStart(1)
     const [cs, fbq, fbid, orq, wtq, oidle, mkq, acq] = await Promise.all([
-      supabase.from('customers').select('id, name, phone, birth_date, anniversary_date, qr_code, qr_secret').eq('restaurant_id', rest.id).limit(500),
+      fetchAll(() => supabase.from('customers').select('id, name, phone, birth_date, anniversary_date, qr_code, qr_secret').eq('restaurant_id', rest.id)),
       supabase.from('feedback').select('stars, order_id, created_at, customers(name)').eq('restaurant_id', rest.id).gte('created_at', dayStart(6)).order('created_at', { ascending: false }).limit(50),
       supabase.from('feedback').select('order_id').eq('restaurant_id', rest.id).gte('created_at', dayStart(6)),
-      supabase.from('orders').select('id, total_paise, other_paid_paise, payment_method, created_at, customer_id, customers(name)').eq('restaurant_id', rest.id).gte('created_at', y0).order('created_at', { ascending: false }).limit(300),
-      supabase.from('wallet_transactions').select('amount_paise, payment_method, created_at').eq('restaurant_id', rest.id).eq('type', 'topup').gte('created_at', y0),
-      supabase.from('orders').select('customer_id, created_at').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(1000),
+      fetchAll(() => supabase.from('orders').select('id, total_paise, other_paid_paise, payment_method, created_at, customer_id, customers(name)').eq('restaurant_id', rest.id).gte('created_at', y0).order('created_at', { ascending: false })),
+      fetchAll(() => supabase.from('wallet_transactions').select('amount_paise, payment_method, created_at').eq('restaurant_id', rest.id).eq('type', 'topup').gte('created_at', y0)),
+      fetchAll(() => supabase.from('orders').select('customer_id, created_at').eq('restaurant_id', rest.id).order('created_at', { ascending: false })),
       supabase.from('marketing_config').select('*').eq('restaurant_id', rest.id).maybeSingle(),
       supabase.from('anniversary_claims').select('customer_id').eq('restaurant_id', rest.id).eq('year', new Date().getFullYear()),
     ])
@@ -158,13 +159,15 @@ export default function Admin() {
   async function creditBday(c) {
     if (!confirm('Credit the birthday bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
     const { error } = await supabase.rpc('claim_birthday', { p_restaurant_id: rest.id, p_customer_id: c.id })
-    error ? setErr(errMsg(error)) : flash('Birthday credit given')
+    if (error) return setErr(errMsg(error))
+    flash('Birthday credit given')
     loadTodo()
   }
   async function creditAnniv(c) {
     if (!confirm('Credit the anniversary bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
     const { error } = await supabase.rpc('claim_anniversary', { p_restaurant_id: rest.id, p_customer_id: c.id })
-    error ? setErr(errMsg(error)) : flash('Anniversary credit given')
+    if (error) return setErr(errMsg(error))
+    flash('Anniversary credit given')
     loadTodo()
   }
   function waNum(p) { let d = (p || '').replace(/\D/g, ''); if (d.length === 10) d = '91' + d; return d }
@@ -173,14 +176,14 @@ export default function Admin() {
     const isCustom = range === 'custom'
     const from = isCustom ? (customFrom ? new Date(customFrom + 'T00:00:00').toISOString() : dayStart(29)) : dayStart(range)
     const toIso = isCustom && customTo ? new Date(customTo + 'T23:59:59').toISOString() : null
-    let qo = supabase.from('orders').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false })
-    let qw = supabase.from('wallet_transactions').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false })
-    if (toIso) { qo = qo.lte('created_at', toIso); qw = qw.lte('created_at', toIso) }
     const [o, w, cb, ol] = await Promise.all([
-      qo, qw,
-      supabase.from('customers').select('id, wallet_balance_paise, created_at').eq('restaurant_id', rest.id),
+      fetchAll(() => { let q = supabase.from('orders').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false }); if (toIso) q = q.lte('created_at', toIso); return q }),
+      fetchAll(() => { let q = supabase.from('wallet_transactions').select('*').eq('restaurant_id', rest.id).gte('created_at', from).order('created_at', { ascending: false }); if (toIso) q = q.lte('created_at', toIso); return q }),
+      fetchAll(() => supabase.from('customers').select('id, wallet_balance_paise, created_at').eq('restaurant_id', rest.id)),
       supabase.from('outlets').select('id, name').eq('restaurant_id', rest.id),
     ])
+    const qErr = [o.error, w.error, cb.error].find(Boolean)
+    if (qErr) setErr('Some report data may be incomplete: ' + errMsg(qErr))
     const ords = o.data || []; const wtx = w.data || []; const custRows = cb.data || []
     const oName = {}; (ol.data || []).forEach(x => oName[x.id] = x.name)
     setOutletNames(oName)
@@ -260,7 +263,7 @@ export default function Admin() {
     const y = new Date().getFullYear(); const m = new Date().getMonth()
     const [mkq, cs, bc, ac, fb] = await Promise.all([
       supabase.from('marketing_config').select('*').eq('restaurant_id', rest.id).maybeSingle(),
-      supabase.from('customers').select('id, name, phone, birth_date, anniversary_date, referral_code').eq('restaurant_id', rest.id).limit(500),
+      fetchAll(() => supabase.from('customers').select('id, name, phone, birth_date, anniversary_date, referral_code').eq('restaurant_id', rest.id)),
       supabase.from('birthday_claims').select('customer_id').eq('restaurant_id', rest.id).eq('year', y),
       supabase.from('anniversary_claims').select('customer_id').eq('restaurant_id', rest.id).eq('year', y),
       supabase.from('feedback').select('*, customers(name)').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(30),
@@ -311,14 +314,17 @@ export default function Admin() {
   async function saveModules() {
     const vals = { wallet_on: modsF.wallet_on, stamps_on: modsF.stamps_on, points_on: modsF.points_on }
     const { error } = await supabase.from('modules_config').upsert({ ...vals, restaurant_id: rest.id }, { onConflict: 'restaurant_id' })
-    error ? setErr(errMsg(error)) : flash('Modules saved — staff and customer apps update on their next load')
+    if (error) return setErr(errMsg(error))
     setMods({ ...vals })
+    flash('Modules saved — staff and customer apps update on their next load')
   }
   async function delScheme() {
     if (!ws) return
     if (!confirm('Delete the wallet scheme? New top-ups will earn no bonus until you save a new one.')) return
     const { error } = await supabase.from('wallet_schemes').delete().eq('id', ws.id)
-    error ? setErr(errMsg(error)) : flash('Wallet scheme deleted'); setWs(null); setWsF({ name: 'Wallet offer', min: '500', bonus: '10', cap: '' }); loadOffers()
+    if (error) return setErr(errMsg(error))
+    setWs(null); setWsF({ name: 'Wallet offer', min: '500', bonus: '10', cap: '' })
+    flash('Wallet scheme deleted'); loadOffers()
   }
   async function delRule(r) {
     const [st, pr] = await Promise.all([
@@ -329,7 +335,8 @@ export default function Admin() {
       return setErr('In use — ' + (st.count || 0) + ' stamp events, ' + (pr.count || 0) + ' card(s) hold progress on it. Turn it Off instead to keep customer history intact.')
     if (!confirm('Delete rule "' + r.name + '" permanently?')) return
     const { error } = await supabase.from('stamp_rules').delete().eq('id', r.id)
-    error ? setErr(errMsg(error)) : flash('Stamp rule deleted')
+    if (error) return setErr(errMsg(error))
+    flash('Stamp rule deleted')
     loadOffers()
   }
   async function delReward(r) {
@@ -338,38 +345,53 @@ export default function Admin() {
       return setErr('Redeemed ' + count + ' time(s) — turn it Off instead to keep history intact.')
     if (!confirm('Delete reward "' + r.name + '" permanently?')) return
     const { error } = await supabase.from('rewards').delete().eq('id', r.id)
-    error ? setErr(errMsg(error)) : flash('Reward deleted')
+    if (error) return setErr(errMsg(error))
+    flash('Reward deleted')
     loadOffers()
   }
 
   const flash = m => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 3000) }
 
   async function saveScheme() {
-    const vals = { name: wsF.name, min_topup_paise: toPaise(wsF.min), bonus_pct: parseFloat(wsF.bonus || 0), bonus_cap_paise: wsF.cap ? toPaise(wsF.cap) : null }
+    const min = toPaise(wsF.min)
+    if (min < 0) return setErr('Minimum top-up cannot be negative.')
+    const bonus = parseFloat(wsF.bonus || 0)
+    if (isNaN(bonus) || bonus < 0 || bonus > 100) return setErr('Bonus must be between 0 and 100 percent.')
+    const vals = { name: wsF.name, min_topup_paise: min, bonus_pct: bonus, bonus_cap_paise: wsF.cap ? toPaise(wsF.cap) : null }
     const { error } = ws
       ? await supabase.from('wallet_schemes').update(vals).eq('id', ws.id)
       : await supabase.from('wallet_schemes').insert({ ...vals, restaurant_id: rest.id })
-    error ? setErr(errMsg(error)) : flash('Wallet scheme saved'); loadOffers()
+    if (error) return setErr(errMsg(error))
+    flash('Wallet scheme saved'); loadOffers()
   }
   async function addRule() {
     const rv = ruleF.reward_type === 'fixed_discount' ? toPaise(ruleF.reward_value) : parseFloat(ruleF.reward_value || 0)
+    if (!ruleF.name.trim() || !ruleF.target_value.trim()) return setErr('Rule needs a name and a target item/category.')
+    if (!(parseInt(ruleF.required_count) > 0)) return setErr('Buy count must be a positive number.')
+    if (ruleF.reward_type === 'percent_discount' && (rv < 0 || rv > 100)) return setErr('Percent discount must be between 0 and 100.')
     const { error } = await supabase.from('stamp_rules').insert({
       restaurant_id: rest.id, name: ruleF.name, target_type: ruleF.target_type, target_value: ruleF.target_value,
       required_count: parseInt(ruleF.required_count), reward_type: ruleF.reward_type, reward_value: rv, reward_label: ruleF.reward_label,
     })
-    error ? setErr(errMsg(error)) : flash('Stamp rule added')
+    if (error) return setErr(errMsg(error))
+    flash('Stamp rule added')
     setRuleF({ ...ruleF, name: '', target_value: '', reward_label: '' }); loadOffers()
   }
   async function savePoints() {
     const tiers = [['Bronze', pcF.b0], ['Silver', pcF.b1], ['Gold', pcF.b2], ['Platinum', pcF.b3]].map(([name, min]) => ({ name, min: parseInt(min || 0) }))
+    const mins = tiers.map(t => t.min)
+    if (mins.some(m => isNaN(m) || m < 0)) return setErr('Tier thresholds must be non-negative numbers.')
+    for (let i = 1; i < mins.length; i++) if (mins[i] <= mins[i - 1]) return setErr('Tier thresholds must increase: Bronze < Silver < Gold < Platinum.')
     const vals = { points_per_rupee: parseFloat(pcF.per100 || 0) / 100, active: pcF.active, tiers }
     const { error } = pc
       ? await supabase.from('points_config').update(vals).eq('id', pc.id)
       : await supabase.from('points_config').insert({ ...vals, restaurant_id: rest.id })
-    error ? setErr(errMsg(error)) : flash('Points settings saved'); loadOffers()
+    if (error) return setErr(errMsg(error))
+    flash('Points settings saved'); loadOffers()
   }
   async function addReward() {
     if (!rwF.name.trim()) return setErr('Give the reward a name, e.g. Free ice cream.')
+    if (!(parseInt(rwF.required_points) > 0)) return setErr('Points needed must be a positive number.')
     const { error } = await supabase.from('rewards').insert({
       restaurant_id: rest.id, name: rwF.name.trim(), description: rwF.description.trim() || null,
       required_points: parseInt(rwF.required_points || 0), value_paise: 0, max_per_customer: parseInt(rwF.max || 0),
@@ -380,7 +402,9 @@ export default function Admin() {
     setRwF({ name: '', description: '', required_points: '500', max: '1' }); loadOffers()
   }
   const toggle = async (table, id, active) => {
-    await supabase.from(table).update({ active: !active }).eq('id', id); loadOffers()
+    const { error } = await supabase.from(table).update({ active: !active }).eq('id', id)
+    if (error) return setErr(errMsg(error))
+    loadOffers()
   }
 
   async function createStaffLogin() {
@@ -410,15 +434,21 @@ export default function Admin() {
     const { error } = await supabase.rpc('add_staff', {
       p_restaurant_id: rest.id, p_email: stF.email, p_role: stF.role, p_name: stF.name || null,
     })
-    error ? setErr(errMsg(error)) : flash('Staff added'); setStF({ email: '', role: 'staff', name: '', phone: '', pw: '' }); loadStaff()
+    if (error) return setErr(errMsg(error))
+    flash('Staff added'); setStF({ email: '', role: 'staff', name: '', phone: '', pw: '' }); loadStaff()
   }
-  async function updStaff(id, vals) { await supabase.from('restaurant_users').update(vals).eq('id', id); loadStaff() }
+  async function updStaff(id, vals) {
+    const { error } = await supabase.from('restaurant_users').update(vals).eq('id', id)
+    if (error) return setErr(errMsg(error))
+    loadStaff()
+  }
   async function resetStaffPw(s) {
     const p = prompt('Set a new starting password for ' + (s.name || 'this member') + ' (8+ characters). Share it with them — they can change it from the Staff portal.')
     if (!p) return
     if (p.length < 8) return setErr('Password must be at least 8 characters.')
     const { error } = await supabase.functions.invoke('reset-staff-password', { body: { target_user_id: s.user_id, new_password: p } })
-    error ? setErr(errMsg(error)) : flash('Password reset for ' + (s.name || 'member'))
+    if (error) return setErr(errMsg(error))
+    flash('Password reset for ' + (s.name || 'member'))
   }
 
   async function searchCusts(s) {
@@ -450,23 +480,26 @@ export default function Admin() {
   }
   async function saveCustDates() {
     const { error } = await supabase.from('customers').update({ birth_date: sel.birth || null, anniversary_date: sel.anniv || null }).eq('id', sel.id)
-    error ? setErr(errMsg(error)) : flash('Dates saved'); setSel(null)
+    if (error) return setErr(errMsg(error))
+    flash('Dates saved'); setSel(null)
   }
   async function adjust() {
     const { error } = await supabase.rpc('adjust_wallet', {
       p_restaurant_id: rest.id, p_customer_id: sel.id, p_amount_paise: toPaise(adjF.amount), p_reason: adjF.reason,
     })
-    error ? setErr(errMsg(error)) : flash('Wallet adjusted'); setAdjF({ amount: '', reason: '' }); openCust(sel)
+    if (error) return setErr(errMsg(error))
+    flash('Wallet adjusted'); setAdjF({ amount: '', reason: '' }); openCust(sel)
   }
   async function addOutlet() {
     const { error } = await supabase.from('outlets').insert({ restaurant_id: rest.id, ...outF })
-    error ? setErr(errMsg(error)) : flash('Outlet added'); setOutF({ name: '', address: '', phone: '' }); loadOutlets()
+    if (error) return setErr(errMsg(error))
+    flash('Outlet added'); setOutF({ name: '', address: '', phone: '' }); loadOutlets()
   }
 
   async function buildCampaign() {
     const [cs, ords] = await Promise.all([
-      supabase.from('customers').select('*').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(200),
-      supabase.from('orders').select('customer_id, created_at').eq('restaurant_id', rest.id).order('created_at', { ascending: false }).limit(1000),
+      fetchAll(() => supabase.from('customers').select('*').eq('restaurant_id', rest.id).order('created_at', { ascending: false })),
+      fetchAll(() => supabase.from('orders').select('customer_id, created_at').eq('restaurant_id', rest.id).order('created_at', { ascending: false })),
     ])
     const lastVisit = {}
     ;(ords.data || []).forEach(o => { if (o.customer_id && !lastVisit[o.customer_id]) lastVisit[o.customer_id] = o.created_at })
@@ -510,17 +543,20 @@ export default function Admin() {
   async function saveItem() {
     const vals = { name: miF.name.trim(), category: miF.category.trim() || null, price_paise: toPaise(miF.price), cost_paise: miF.cost_paise ?? null, active: miF.active }
     if (!vals.name) return setErr('Item name is required.')
+    if (vals.price_paise < 0) return setErr('Price cannot be negative.')
     const { error } = miF.id
       ? await supabase.from('menu_items').update(vals).eq('id', miF.id)
       : await supabase.from('menu_items').insert({ ...vals, restaurant_id: rest.id })
-    error ? setErr(errMsg(error)) : flash(miF.id ? 'Item updated' : 'Item added')
+    if (error) return setErr(errMsg(error))
+    flash(miF.id ? 'Item updated' : 'Item added')
     setMiF({ id: null, name: '', category: '', price: '', active: true, cost_paise: null }); loadMenu()
   }
   function editItem(m) { setMiF({ id: m.id, name: m.name, category: m.category || '', price: String(m.price_paise / 100), active: m.active, cost_paise: m.cost_paise }); window.scrollTo({ top: 0, behavior: 'smooth' }) }
   async function delItem(m) {
     if (!confirm('Delete "' + m.name + '" from the menu? Past bills are not affected.')) return
     const { error } = await supabase.from('menu_items').delete().eq('id', m.id)
-    error ? setErr(errMsg(error)) : flash('Item deleted'); loadMenu()
+    if (error) return setErr(errMsg(error))
+    flash('Item deleted'); loadMenu()
   }
 
   async function saveMk() {
@@ -528,17 +564,20 @@ export default function Admin() {
     const { error } = mk
       ? await supabase.from('marketing_config').update(vals).eq('restaurant_id', rest.id)
       : await supabase.from('marketing_config').insert({ ...vals, restaurant_id: rest.id })
-    error ? setErr(errMsg(error)) : flash('Marketing settings saved'); loadMarketing()
+    if (error) return setErr(errMsg(error))
+    flash('Marketing settings saved'); loadMarketing()
   }
   async function claimBday(c) {
     if (!confirm('Credit the birthday bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
     const { error } = await supabase.rpc('claim_birthday', { p_restaurant_id: rest.id, p_customer_id: c.id })
-    error ? setErr(errMsg(error)) : flash('Birthday credit given'); loadMarketing()
+    if (error) return setErr(errMsg(error))
+    flash('Birthday credit given'); loadMarketing()
   }
   async function claimAnnivAdmin(c) {
     if (!confirm('Credit the anniversary bonus to ' + (c.name || 'this customer') + '? Once per year.')) return
     const { error } = await supabase.rpc('claim_anniversary', { p_restaurant_id: rest.id, p_customer_id: c.id })
-    error ? setErr(errMsg(error)) : flash('Anniversary credit given'); loadMarketing(); loadTodo()
+    if (error) return setErr(errMsg(error))
+    flash('Anniversary credit given'); loadMarketing(); loadTodo()
   }
 
   const ledgerRows = [
