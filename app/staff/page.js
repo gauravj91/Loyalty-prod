@@ -143,8 +143,7 @@ export default function Staff() {
   const sameDay = ds => { if (!ds) return false; const d = new Date(ds + 'T00:00:00'); const t = new Date(); return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() }
   const isBday = sameDay(cust?.birth_date)
   const isAnniv = sameDay(cust?.anniversary_date)
-  const topBonus = scheme && toPaise(topAmt) > 0 ? Math.floor(toPaise(topAmt) * scheme.bonus_pct / 100) : 0
-  const topCredit = toPaise(topAmt) + topBonus
+  const topBonus = (() => { const amt = toPaise(topAmt); if (!scheme || amt <= 0) return 0; const b = Math.floor(amt * scheme.bonus_pct / 100); return scheme.bonus_cap_paise != null ? Math.min(b, scheme.bonus_cap_paise) : b })()  const topCredit = toPaise(topAmt) + topBonus
 
   function applyStamp(p) {
     const rule = p.stamp_rules
@@ -459,8 +458,8 @@ export default function Staff() {
         </div>}
         <div className="row" style={{ flexWrap: 'wrap' }}>
           {[500, 1000, 2000, 5000].map(v => {
-            const b = scheme ? Math.floor(v * scheme.bonus_pct / 100) : 0
-            return <button key={v} className="chip" style={{ cursor: 'pointer', fontSize: 14 }} onClick={() => setTopAmt(String(v))}>
+            const b = scheme ? Math.min(Math.floor(v * scheme.bonus_pct / 100), scheme.bonus_cap_paise ?? Infinity) : 0
+              return <button key={v} className="chip" style={{ cursor: 'pointer', fontSize: 14 }} onClick={() => setTopAmt(String(v))}>
               {b > 0 ? '₹' + v + ' → ₹' + (v + b) : '₹' + v}
             </button>
           })}
