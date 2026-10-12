@@ -35,10 +35,16 @@ export default function Login() {
     const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password: pw })
     setBusy(false); if (error) return setErr(errMsg(error)); route()
   }
-  async function signUpOwner(e) {
+   async function signUpOwner(e) {
     e.preventDefault(); setBusy(true); setErr(''); setMsg('')
-    const { error } = await supabase.auth.signUp({ email, password: pw })
+    const { data: sd, error } = await supabase.auth.signUp({ email, password: pw })
     if (error) { setBusy(false); return setErr(errMsg(error)) }
+    if (!sd.session) {
+      setBusy(false)
+      setMsg('Account created. Check your inbox to confirm your email, then sign in — you\'ll be able to create your restaurant from there.')
+      setMode('in')
+      return
+    }
     const clean = slug.toLowerCase().replace(/[^a-z0-9-]/g, '')
     const { error: e2 } = await supabase.rpc('create_restaurant', { p_name: name, p_slug: clean })
     if (e2) { setBusy(false); return setErr(errMsg(e2)) }
