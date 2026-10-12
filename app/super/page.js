@@ -25,14 +25,20 @@ export default function Super() {
 
   async function createResto() {
     const clean = f.slug.toLowerCase().replace(/[^a-z0-9-]/g, '')
-    const { error } = await supabase.from('restaurants').insert({ name: f.name, slug: clean })
-    if (error) return setErr(errMsg(error))
-    if (f.email) {
+    const { data: rid, error } = await supabase.rpc('super_create_restaurant', {
+      p_name: f.name.trim(), p_slug: clean, p_owner_email: f.email.trim() || null,
+    })
+    if (error && /duplicate|exists/i.test(error.message || '') && f.email.trim()) {
       const { data: r } = await supabase.from('restaurants').select('id').eq('slug', clean).single()
-      const { error: e2 } = await supabase.rpc('add_staff', { p_restaurant_id: r.id, p_email: f.email, p_role: 'owner' })
-      if (e2) return setErr(errMsg(e2))
+      if (r) {
+        const { error: e2 } = await supabase.rpc('add_staff', { p_restaurant_id: r.id, p_email: f.email.trim(), p_role: 'owner' })
+        if (e2) return setErr(errMsg(e2))
+        setMsg('Restaurant already existed — owner linked to it.'); setF({ name: '', slug: '', email: '' }); load(); return
+      }
     }
-    setMsg('Restaurant created.'); setF({ name: '', slug: '', email: '' }); load()
+    if (error) return setErr(errMsg(error))
+    setMsg('Restaurant created' + (f.email.trim() ? ' and owner linked.' : '.'))
+    setF({ name: '', slug: '', email: '' }); load()
   }
 
   function issues(r) {
