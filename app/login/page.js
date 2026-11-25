@@ -80,7 +80,7 @@ export default function Login() {
 
   return <div className="wrap" style={{ paddingTop: 40 }}>
     <div style={{ textAlign: 'center', marginBottom: 20 }}>
-      <div style={{ fontWeight: 800, fontSize: 24, color: '#C2511F' }}>Tessera</div>
+      <div style={{ fontWeight: 800, fontSize: 24, color: '#C2511F' }}>Reward Loops</div>
       <div className="muted sm">Loyalty & offers for restaurants</div>
     </div>
     <div className="card">

@@ -513,7 +513,7 @@ export default function Admin() {
     })
     setCampList(rows); setCampIdx(0)
     try {
-      const s = JSON.parse(localStorage.getItem('tessera_camp_' + rest.slug + '_' + campSeg) || 'null')
+      const s = JSON.parse(localStorage.getItem('reward_loops_camp_' + rest.slug + '_' + campSeg) || 'null')
       setSentIds(s && s.date === new Date().toDateString() ? s.ids : [])
     } catch (e) { setSentIds([]) }
   }
@@ -523,7 +523,7 @@ export default function Admin() {
   function waLink(c) {
     return 'https://wa.me/' + waNum(c.phone) + '?text=' + encodeURIComponent(campText(c))
   }
-  function sentKey() { return 'tessera_camp_' + rest.slug + '_' + campSeg }
+  function sentKey() { return 'reward_loops_camp_' + rest.slug + '_' + campSeg }
   function openNext(skip) {
     if (!campList || campIdx >= campList.length) return
     const c = campList[campIdx]

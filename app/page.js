@@ -14,7 +14,7 @@ export default function Home() {
     return r.replace(pa?.length ? '/super' : '/login')
   })() }, [])
   return <div className="wrap" style={{ textAlign: 'center', paddingTop: 80 }}>
-    <div style={{ fontWeight: 800, fontSize: 26, color: '#C2511F', letterSpacing: '-.02em' }}>Tessera</div>
+    <div style={{ fontWeight: 800, fontSize: 26, color: '#C2511F', letterSpacing: '-.02em' }}>Reward Loops</div>
     <p className="muted sm" style={{ marginTop: 8 }}>Loading…</p>
   </div>
 }

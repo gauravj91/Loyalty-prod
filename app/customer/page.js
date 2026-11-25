@@ -4,7 +4,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { supabase } from '../../lib/supabase'
 import { inr, fmtDate, tierFor, nextTierFor, errMsg } from '../../lib/helpers'
 
-const LS = 'tessera_customer'
+const LS = 'reward_loops_customer'
 
 const Lock = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ verticalAlign: '-1px', marginLeft: 4 }}><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
 
@@ -98,7 +98,7 @@ export default function CustomerPortal() {
   if (status === 'loading') return <div className="wrap"><p className="muted">Loading…</p></div>
 
   if (status === 'need_link') return <div className="wrap" style={{ paddingTop: 60 }}>
-    <div style={{ textAlign: 'center', fontWeight: 800, fontSize: 22, color: '#C2511F' }}>Tessera</div>
+    <div style={{ textAlign: 'center', fontWeight: 800, fontSize: 22, color: '#C2511F' }}>Reward Loops</div>
     <div className="card" style={{ marginTop: 20 }}>
       {invite
         ? <>
