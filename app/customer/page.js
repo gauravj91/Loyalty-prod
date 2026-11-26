@@ -98,7 +98,7 @@ export default function CustomerPortal() {
   if (status === 'loading') return <div className="wrap"><p className="muted">Loading…</p></div>
 
   if (status === 'need_link') return <div className="wrap" style={{ paddingTop: 60 }}>
-    <div style={{ textAlign: 'center', fontWeight: 800, fontSize: 22, color: '#C2511F' }}>Tessera</div>
+    <div style={{ textAlign: 'center', fontWeight: 800, fontSize: 22, color: '#C2511F' }}>RewardLoops</div>
     <div className="card" style={{ marginTop: 20 }}>
       {invite
         ? <>
